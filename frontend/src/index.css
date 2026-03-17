@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0f172a;
+  color: #f1f5f9;
+}
+
+.glow-green  { box-shadow: 0 0 15px rgba(34, 197, 94, 0.15); }
+.glow-red    { box-shadow: 0 0 15px rgba(239, 68, 68, 0.15); }
+.glow-amber  { box-shadow: 0 0 15px rgba(245, 158, 11, 0.15); }
