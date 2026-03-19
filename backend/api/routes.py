@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 from data.market_data import get_ohlcv, get_spot_price, get_market_status
-from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv
+from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv, _fallback_chain
 from indicators.engine import compute_indicators
 from ai.signal_engine import generate_signal
 from ai.budget_optimizer import optimize
@@ -149,6 +149,9 @@ async def compute_signal(req: ComputeSignalRequest):
         df = _ohlcv_to_df(req.ohlcv)
         spot = float(df["Close"].iloc[-1])
         chain = fetch_option_chain(ticker)
+        # If NSE was unreachable and strikes are empty, regenerate with spot price
+        if chain.get("fallback") and not chain.get("strikes") and spot > 0:
+            chain = _fallback_chain(ticker, spot)
         iv = get_atm_iv(chain)
         indic = compute_indicators(df, pcr=chain["pcr"], iv=iv)
         expiry = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
@@ -180,6 +183,9 @@ async def compute_optimize(req: ComputeOptimizeRequest):
         df = _ohlcv_to_df(req.ohlcv)
         spot = float(df["Close"].iloc[-1])
         chain = fetch_option_chain(ticker)
+        # If NSE was unreachable and strikes are empty, regenerate with spot price
+        if chain.get("fallback") and not chain.get("strikes") and spot > 0:
+            chain = _fallback_chain(ticker, spot)
         iv = get_atm_iv(chain)
         indic = compute_indicators(df, pcr=chain["pcr"], iv=iv)
         expiry = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))

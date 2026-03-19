@@ -3,7 +3,7 @@ import { useStore } from '../store'
 export default function BudgetOptimizer() {
   const { budget, setBudget, fetchOptimize, optimizeLoading, optimizeData, optimizeError, ticker } = useStore()
 
-  const rec = optimizeData?.recommendation
+  const rec = optimizeData?.plan
 
   return (
     <div className="bg-terminal-surface border border-terminal-border rounded-lg p-5">
@@ -41,13 +41,13 @@ export default function BudgetOptimizer() {
         <div className="text-terminal-red text-xs font-mono mb-3">⚠ {optimizeError}</div>
       )}
 
-      {rec && !rec.recommended && (
+      {rec && rec.recommendation === 'AVOID' && (
         <div className="p-3 rounded bg-terminal-amber/10 border border-terminal-amber/30">
           <p className="text-terminal-amber text-sm font-mono">{rec.reason}</p>
         </div>
       )}
 
-      {rec?.recommended && (
+      {rec?.recommendation === 'TRADE' && (
         <div className="space-y-3">
           {/* Primary recommendation */}
           <div className="p-4 rounded bg-terminal-green/5 border border-terminal-green/40">

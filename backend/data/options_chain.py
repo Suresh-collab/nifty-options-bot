@@ -42,17 +42,45 @@ def get_next_expiry(ticker: str) -> datetime:
     expiry = now + timedelta(days=days_ahead)
     return expiry.replace(hour=15, minute=30, second=0, microsecond=0)
 
-def _fallback_chain(ticker: str) -> dict:
-    """Return a sensible fallback when NSE API is unreachable (e.g., non-Indian IP)."""
+def _fallback_chain(ticker: str, spot: float = 0) -> dict:
+    """Return a sensible fallback when NSE API is unreachable (e.g., non-Indian IP).
+    If spot price is available, generates synthetic strikes so the optimizer can still work."""
+    step = 50 if ticker.upper() == "NIFTY" else 100
+    strikes = []
+
+    if spot > 0:
+        # Generate synthetic strikes around the spot price
+        atm = round(spot / step) * step
+        for i in range(-10, 11):
+            s = atm + i * step
+            dist = abs(s - spot)
+            # Approximate option premiums using distance from ATM
+            # ATM options ~ 1.5-2% of spot, decaying with distance
+            base_premium = spot * 0.015
+            decay = max(0.05, 1 - (dist / (step * 10)))
+            ce_ltp = round(max(5, base_premium * decay * (1.1 if s < spot else 0.9)), 2)
+            pe_ltp = round(max(5, base_premium * decay * (1.1 if s > spot else 0.9)), 2)
+            strikes.append({
+                "strike": s,
+                "ce_ltp": ce_ltp,
+                "ce_oi": 0,
+                "ce_iv": 15.0,
+                "ce_chg_oi": 0,
+                "pe_ltp": pe_ltp,
+                "pe_oi": 0,
+                "pe_iv": 15.0,
+                "pe_chg_oi": 0,
+            })
+
     return {
         "ticker": ticker,
-        "spot": 0,
+        "spot": spot,
         "expiry": get_next_expiry(ticker).strftime("%d-%b-%Y"),
         "pcr": 1.0,
-        "max_pain": 0,
+        "max_pain": round(spot / step) * step if spot > 0 else 0,
         "total_ce_oi": 0,
         "total_pe_oi": 0,
-        "strikes": [],
+        "strikes": strikes,
         "fetched_at": datetime.now().isoformat(),
         "fallback": True,
     }
