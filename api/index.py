@@ -35,17 +35,18 @@ async def health():
     return {"status": "ok", "env": "vercel"}
 
 
-@app.get("/api/debug-yfinance")
-async def debug_yfinance():
-    """Test if yfinance works on Vercel."""
+@app.get("/api/debug-chart")
+async def debug_chart():
+    """Test chart data fetching end-to-end."""
     try:
-        import yfinance as yf
-        ticker = yf.download("^NSEI", period="1d", interval="5m",
-                             progress=False, auto_adjust=True)
+        from data.market_data import get_ohlcv
+        df = get_ohlcv("NIFTY", interval="5m")
         return {
             "status": "ok",
-            "rows": len(ticker),
-            "columns": list(ticker.columns) if hasattr(ticker, 'columns') else [],
+            "rows": len(df),
+            "columns": list(df.columns),
+            "last_index": str(df.index[-1]) if len(df) > 0 else None,
+            "last_close": float(df["Close"].iloc[-1]) if len(df) > 0 else None,
         }
     except Exception as e:
         return {
