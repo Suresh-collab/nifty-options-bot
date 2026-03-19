@@ -19,6 +19,7 @@ function toIST(data) {
 
 export default function LiveChart() {
   const chartRef = useRef(null)
+  const containerRef = useRef(null)
   const chartInstance = useRef(null)
   const candleSeriesRef = useRef(null)
   const volumeSeriesRef = useRef(null)
@@ -34,6 +35,24 @@ export default function LiveChart() {
   const [priceChange, setPriceChange] = useState(0)
   const [showSignals, setShowSignals] = useState(true)
   const [signalStats, setSignalStats] = useState(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // Fullscreen toggle
+  const toggleFullscreen = useCallback(() => {
+    if (!containerRef.current) return
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {})
+    }
+  }, [])
+
+  // Listen for fullscreen exit via Escape
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handler)
+    return () => document.removeEventListener('fullscreenchange', handler)
+  }, [])
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -63,7 +82,7 @@ export default function LiveChart() {
         secondsVisible: false,
       },
       width: chartRef.current.clientWidth,
-      height: 420,
+      height: isFullscreen ? window.innerHeight - 120 : 420,
     })
 
     const candleSeries = chart.addCandlestickSeries({
@@ -100,7 +119,10 @@ export default function LiveChart() {
 
     const handleResize = () => {
       if (chartRef.current) {
-        chart.applyOptions({ width: chartRef.current.clientWidth })
+        chart.applyOptions({
+          width: chartRef.current.clientWidth,
+          height: document.fullscreenElement ? window.innerHeight - 120 : 420,
+        })
       }
     }
     window.addEventListener('resize', handleResize)
@@ -114,7 +136,7 @@ export default function LiveChart() {
       stLineSeriesRef.current = null
       srLinesRef.current = []
     }
-  }, [])
+  }, [isFullscreen])
 
   const applySignals = useCallback((data) => {
     if (!showSignals || !candleSeriesRef.current || !chartInstance.current) return
@@ -127,8 +149,6 @@ export default function LiveChart() {
 
       // Apply SuperTrend line with color segments
       if (stLineSeriesRef.current && trendLine.length > 0) {
-        // lightweight-charts line series needs color per-point via markers approach
-        // Use setData with color property
         stLineSeriesRef.current.setData(
           trendLine.map(p => ({ time: p.time, value: p.value, color: p.color }))
         )
@@ -173,7 +193,6 @@ export default function LiveChart() {
   const fetchChart = useCallback(async (fullLoad = false) => {
     if (fullLoad) setLoading(true)
     try {
-      // Try server-side first (works on localhost), fall back to client-side Yahoo fetch
       let data
       try {
         const res = await fetch(`/api/chart/${ticker}?interval=${interval}`)
@@ -195,7 +214,6 @@ export default function LiveChart() {
       const isNewData = prev.length === 0 || fullLoad
 
       if (isNewData) {
-        // Full data load
         candleSeriesRef.current.setData(
           data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }))
         )
@@ -207,7 +225,6 @@ export default function LiveChart() {
           }))
         )
 
-        // Apply signals on full load
         applySignals(data)
 
         if (isFirstLoad.current) {
@@ -215,7 +232,6 @@ export default function LiveChart() {
           isFirstLoad.current = false
         }
       } else {
-        // Incremental update — only update changed/new candles
         const lastOldTime = prev.length > 0 ? prev[prev.length - 1].time : 0
         for (const d of data) {
           if (d.time >= lastOldTime) {
@@ -229,13 +245,11 @@ export default function LiveChart() {
             })
           }
         }
-        // Re-apply signals on incremental updates too (every 10s)
         applySignals(data)
       }
 
       lastDataRef.current = data
 
-      // Update price display
       const latest = data[data.length - 1]
       const prevCandle = data.length > 1 ? data[data.length - 2] : latest
       setLastPrice(latest.close)
@@ -249,12 +263,10 @@ export default function LiveChart() {
   }, [ticker, interval, applySignals])
 
   useEffect(() => {
-    // Reset on ticker/interval change
     lastDataRef.current = []
     isFirstLoad.current = true
     fetchChart(true)
 
-    // Live polling every 10 seconds
     const iv = window.setInterval(() => fetchChart(false), 10000)
     return () => window.clearInterval(iv)
   }, [ticker, interval, fetchChart])
@@ -265,7 +277,6 @@ export default function LiveChart() {
       if (showSignals) {
         applySignals(lastDataRef.current)
       } else {
-        // Clear all overlays
         candleSeriesRef.current?.setMarkers([])
         stLineSeriesRef.current?.setData([])
         for (const line of srLinesRef.current) {
@@ -281,7 +292,7 @@ export default function LiveChart() {
   const changeSign = priceChange >= 0 ? '+' : ''
 
   return (
-    <div className="bg-terminal-surface border border-terminal-border rounded-lg overflow-hidden">
+    <div ref={containerRef} className={`bg-terminal-surface border border-terminal-border rounded-lg overflow-hidden ${isFullscreen ? 'bg-terminal-bg' : ''}`}>
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border">
         <div className="flex items-center gap-3">
@@ -331,10 +342,18 @@ export default function LiveChart() {
               {i.label}
             </button>
           ))}
+          {/* Fullscreen button */}
+          <button
+            onClick={toggleFullscreen}
+            className="px-2 py-0.5 text-xs font-mono rounded text-terminal-dim hover:text-terminal-text hover:bg-terminal-border transition-colors border border-transparent"
+            title={isFullscreen ? 'Exit fullscreen (Esc)' : 'View chart in fullscreen'}
+          >
+            {isFullscreen ? '⊠ Exit' : '⛶ Fullscreen'}
+          </button>
         </div>
       </div>
 
-      {/* Signal stats bar */}
+      {/* Signal stats bar with explanations */}
       {showSignals && signalStats && (
         <div className="px-4 py-1.5 border-b border-terminal-border/50 flex items-center gap-4 text-[10px] font-mono">
           <span className="text-terminal-dim">SIGNALS:</span>
@@ -363,15 +382,22 @@ export default function LiveChart() {
       )}
       <div ref={chartRef} />
 
-      {/* Legend */}
+      {/* Legend with explanations */}
       {showSignals && (
-        <div className="px-4 py-1.5 border-t border-terminal-border/50 flex items-center gap-4 text-[10px] font-mono text-terminal-dim">
-          <span><span className="inline-block w-3 h-0.5 bg-terminal-green mr-1" />SuperTrend Up</span>
-          <span><span className="inline-block w-3 h-0.5 bg-terminal-red mr-1" />SuperTrend Down</span>
-          <span><span className="text-terminal-green mr-1">▲</span>Buy Signal</span>
-          <span><span className="text-terminal-red mr-1">▼</span>Sell Signal</span>
-          <span><span className="inline-block w-3 h-0.5 bg-terminal-green/30 mr-1 border-t border-dashed border-terminal-green/50" />Support</span>
-          <span><span className="inline-block w-3 h-0.5 bg-terminal-red/30 mr-1 border-t border-dashed border-terminal-red/50" />Resistance</span>
+        <div className="px-4 py-2 border-t border-terminal-border/50 space-y-1.5">
+          <div className="flex items-center gap-4 text-[10px] font-mono text-terminal-dim flex-wrap">
+            <span><span className="inline-block w-3 h-0.5 bg-terminal-green mr-1 align-middle" />SuperTrend Up</span>
+            <span><span className="inline-block w-3 h-0.5 bg-terminal-red mr-1 align-middle" />SuperTrend Down</span>
+            <span><span className="text-terminal-green mr-1">▲</span>Buy Signal</span>
+            <span><span className="text-terminal-red mr-1">▼</span>Sell Signal</span>
+            <span><span className="inline-block w-3 h-0.5 bg-terminal-green/50 mr-1 align-middle" />Support (floor)</span>
+            <span><span className="inline-block w-3 h-0.5 bg-terminal-red/50 mr-1 align-middle" />Resistance (ceiling)</span>
+          </div>
+          <div className="text-[10px] font-mono text-terminal-dim/70 leading-relaxed">
+            <span className="text-terminal-green">S (Support)</span> = price level where stock tends to bounce up (good to buy near).{' '}
+            <span className="text-terminal-red">R (Resistance)</span> = price level where stock tends to fall back (consider selling near).{' '}
+            Signals appear only when 3+ indicators agree (reduces false signals).
+          </div>
         </div>
       )}
     </div>
