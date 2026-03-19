@@ -140,7 +140,7 @@ export default function LiveChart() {
       priceScaleId: 'vol',
     })
     volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
+      scaleMargins: { top: 0.7, bottom: 0 },
     })
 
     const stLineSeries = chart.addLineSeries({
@@ -244,14 +244,46 @@ export default function LiveChart() {
         width: rsiChartRef.current.clientWidth,
         height: 120,
       })
+      // Overbought zone (baseline at 70 — red shading above)
+      const obZone = rsiChart.addBaselineSeries({
+        baseValue: { type: 'price', price: 70 },
+        topLineColor: 'transparent',
+        topFillColor1: 'rgba(239,68,68,0.25)',
+        topFillColor2: 'rgba(239,68,68,0.05)',
+        bottomLineColor: 'transparent',
+        bottomFillColor1: 'transparent',
+        bottomFillColor2: 'transparent',
+        lineWidth: 0,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      })
+
+      // Oversold zone (baseline at 40 — green shading below)
+      const osZone = rsiChart.addBaselineSeries({
+        baseValue: { type: 'price', price: 40 },
+        topLineColor: 'transparent',
+        topFillColor1: 'transparent',
+        topFillColor2: 'transparent',
+        bottomLineColor: 'transparent',
+        bottomFillColor1: 'rgba(34,197,94,0.25)',
+        bottomFillColor2: 'rgba(34,197,94,0.05)',
+        lineWidth: 0,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      })
+
       const rsiLine = rsiChart.addLineSeries({ color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: 'RSI 14' })
-      const ob = rsiChart.addLineSeries({ color: '#ef444450', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false })
-      const os = rsiChart.addLineSeries({ color: '#22c55e50', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false })
-      const mid = rsiChart.addLineSeries({ color: '#475569', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false })
+
+      // Add clear horizontal reference lines at 70, 50, 40
+      rsiLine.createPriceLine({ price: 70, color: '#ef4444', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'OB 70' })
+      rsiLine.createPriceLine({ price: 40, color: '#22c55e', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'OS 40' })
+      rsiLine.createPriceLine({ price: 50, color: '#64748b', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: '' })
 
       rsiChartInstance.current = rsiChart
       rsiSeriesRef.current = rsiLine
-      rsiOverboughtRef.current = { ob, os, mid }
+      rsiOverboughtRef.current = { obZone, osZone }
 
       // Sync time scale
       if (chartInstance.current) {
@@ -317,11 +349,9 @@ export default function LiveChart() {
         }
       }
       rsiSeriesRef.current.setData(rsiData)
-      if (rsiData.length > 1 && rsiOverboughtRef.current) {
-        const t0 = rsiData[0].time, t1 = rsiData[rsiData.length - 1].time
-        rsiOverboughtRef.current.ob.setData([{ time: t0, value: 70 }, { time: t1, value: 70 }])
-        rsiOverboughtRef.current.os.setData([{ time: t0, value: 30 }, { time: t1, value: 30 }])
-        rsiOverboughtRef.current.mid.setData([{ time: t0, value: 50 }, { time: t1, value: 50 }])
+      if (rsiData.length > 0 && rsiOverboughtRef.current) {
+        rsiOverboughtRef.current.obZone.setData(rsiData)
+        rsiOverboughtRef.current.osZone.setData(rsiData)
       }
     }
 
@@ -464,7 +494,7 @@ export default function LiveChart() {
           data.map(d => ({
             time: d.time,
             value: d.volume,
-            color: d.close >= d.open ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
+            color: d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)',
           }))
         )
         applySignals(data)
@@ -480,7 +510,7 @@ export default function LiveChart() {
             candleSeriesRef.current.update({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })
             volumeSeriesRef.current.update({
               time: d.time, value: d.volume,
-              color: d.close >= d.open ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
+              color: d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)',
             })
           }
         }
@@ -676,9 +706,9 @@ export default function LiveChart() {
           <div className="px-3 py-0.5 flex items-center gap-2 text-[10px] font-mono bg-[#0f172a]">
             <span className="text-purple-400 font-medium">RSI (14)</span>
             <span className="text-[#475569]">|</span>
-            <span className="text-terminal-red/50">70</span>
-            <span className="text-[#475569]">50</span>
-            <span className="text-terminal-green/50">30</span>
+            <span className="text-terminal-red">70</span>
+            <span className="text-[#64748b]">50</span>
+            <span className="text-terminal-green">40</span>
           </div>
           <div ref={rsiChartRef} />
         </div>
