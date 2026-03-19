@@ -17,6 +17,11 @@
     }
   ],
   "routes": [
+    {
+      "src": "/yf-proxy/(.*)",
+      "dest": "https://query1.finance.yahoo.com/$1",
+      "headers": { "User-Agent": "Mozilla/5.0" }
+    },
     { "src": "/api/(.*)", "dest": "/api/index.py" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/frontend/$1" }

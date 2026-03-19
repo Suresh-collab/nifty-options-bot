@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createChart } from 'lightweight-charts'
 import { useStore } from '../store'
+import { fetchOHLCV } from '../lib/yahooFetch'
 
 const INTERVALS = [
   { label: '5m', value: '5m' },
@@ -94,9 +95,18 @@ export default function LiveChart() {
   const fetchChart = useCallback(async (fullLoad = false) => {
     if (fullLoad) setLoading(true)
     try {
-      const res = await fetch(`/api/chart/${ticker}?interval=${interval}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
+      // Try server-side first (works on localhost), fall back to client-side Yahoo fetch
+      let data
+      try {
+        const res = await fetch(`/api/chart/${ticker}?interval=${interval}`)
+        if (res.ok) {
+          data = await res.json()
+        }
+      } catch {}
+
+      if (!data || data.length === 0) {
+        data = await fetchOHLCV(ticker, interval)
+      }
 
       if (!candleSeriesRef.current || data.length === 0) return
 

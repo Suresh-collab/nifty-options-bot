@@ -1,5 +1,7 @@
+from typing import List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import pandas as pd
 from data.market_data import get_ohlcv, get_spot_price, get_market_status
 from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv
 from indicators.engine import compute_indicators
@@ -12,6 +14,23 @@ from paper_trading.simulator import (
 router = APIRouter()
 
 # --- Request models ---
+class OHLCVItem(BaseModel):
+    time: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int = 0
+
+class ComputeSignalRequest(BaseModel):
+    ticker: str
+    ohlcv: List[OHLCVItem]
+
+class ComputeOptimizeRequest(BaseModel):
+    ticker: str
+    budget: float
+    ohlcv: List[OHLCVItem]
+
 class OptimizeRequest(BaseModel):
     ticker: str
     budget: float
@@ -103,6 +122,68 @@ async def optimize_budget(req: OptimizeRequest):
         expiry = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
         signal = generate_signal(ticker, spot, str(expiry), indic, chain)
         plan   = optimize(req.budget, ticker, signal, chain)
+        return {"signal": signal, "plan": plan}
+    except Exception as e:
+        raise HTTPException(500, f"Optimization failed: {str(e)}")
+
+
+# --- Client-side data: compute signal from browser-fetched OHLCV ---
+def _ohlcv_to_df(ohlcv: List[OHLCVItem]) -> pd.DataFrame:
+    """Convert client-provided OHLCV list to a pandas DataFrame."""
+    records = [{"Open": c.open, "High": c.high, "Low": c.low,
+                "Close": c.close, "Volume": c.volume} for c in ohlcv]
+    timestamps = [pd.Timestamp(c.time, unit="s") for c in ohlcv]
+    return pd.DataFrame(records, index=timestamps)
+
+
+@router.post("/compute-signal")
+async def compute_signal(req: ComputeSignalRequest):
+    """Compute signal from client-provided OHLCV data (avoids cloud IP blocking)."""
+    ticker = req.ticker.upper()
+    if ticker not in ("NIFTY", "SENSEX"):
+        raise HTTPException(400, "ticker must be NIFTY or SENSEX")
+    if len(req.ohlcv) < 20:
+        raise HTTPException(400, "Need at least 20 candles for indicators")
+    try:
+        df = _ohlcv_to_df(req.ohlcv)
+        spot = float(df["Close"].iloc[-1])
+        chain = fetch_option_chain(ticker)
+        iv = get_atm_iv(chain)
+        indic = compute_indicators(df, pcr=chain["pcr"], iv=iv)
+        expiry = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
+        signal = generate_signal(ticker, spot, str(expiry), indic, chain)
+        return {
+            "ticker": ticker,
+            "spot": spot,
+            "indicators": indic,
+            "chain_summary": {
+                "pcr": chain["pcr"],
+                "max_pain": chain["max_pain"],
+                "expiry": expiry,
+            },
+            "signal": signal,
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Signal computation failed: {str(e)}")
+
+
+@router.post("/compute-optimize")
+async def compute_optimize(req: ComputeOptimizeRequest):
+    """Budget optimizer using client-provided OHLCV data."""
+    ticker = req.ticker.upper()
+    if ticker not in ("NIFTY", "SENSEX"):
+        raise HTTPException(400, "ticker must be NIFTY or SENSEX")
+    if len(req.ohlcv) < 20:
+        raise HTTPException(400, "Need at least 20 candles for indicators")
+    try:
+        df = _ohlcv_to_df(req.ohlcv)
+        spot = float(df["Close"].iloc[-1])
+        chain = fetch_option_chain(ticker)
+        iv = get_atm_iv(chain)
+        indic = compute_indicators(df, pcr=chain["pcr"], iv=iv)
+        expiry = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
+        signal = generate_signal(ticker, spot, str(expiry), indic, chain)
+        plan = optimize(req.budget, ticker, signal, chain)
         return {"signal": signal, "plan": plan}
     except Exception as e:
         raise HTTPException(500, f"Optimization failed: {str(e)}")

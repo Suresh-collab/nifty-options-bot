@@ -1,9 +1,13 @@
 import { create } from 'zustand'
+import { fetchOHLCV } from '../lib/yahooFetch'
 
 export const useStore = create((set, get) => ({
   // ── Ticker ────────────────────────────────────────────
   ticker: 'NIFTY',
   setTicker: (t) => set({ ticker: t, signalData: null, optimizeData: null }),
+
+  // ── Cached OHLCV (shared between chart and signal) ───
+  _cachedOHLCV: null,
 
   // ── Signal ────────────────────────────────────────────
   signalData: null,
@@ -15,7 +19,23 @@ export const useStore = create((set, get) => ({
     const { ticker } = get()
     set({ signalLoading: true, signalError: null })
     try {
-      const res = await fetch(`/api/signal/${ticker}`)
+      // Try server-side first (works on localhost), fall back to client-side fetch
+      let res = await fetch(`/api/signal/${ticker}`)
+      if (res.ok) {
+        const data = await res.json()
+        set({ signalData: data, signalLoading: false, lastUpdated: new Date() })
+        return
+      }
+
+      // Server-side failed — fetch OHLCV client-side and compute on server
+      const ohlcv = await fetchOHLCV(ticker, '5m')
+      set({ _cachedOHLCV: ohlcv })
+
+      res = await fetch('/api/compute-signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker, ohlcv }),
+      })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       set({ signalData: data, signalLoading: false, lastUpdated: new Date() })
@@ -36,10 +56,29 @@ export const useStore = create((set, get) => ({
     if (!budget || isNaN(Number(budget))) return
     set({ optimizeLoading: true, optimizeError: null })
     try {
-      const res = await fetch('/api/optimize', {
+      // Try server-side first
+      let res = await fetch('/api/optimize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker, budget: Number(budget) }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        set({ optimizeData: data, optimizeLoading: false })
+        return
+      }
+
+      // Fall back to client-side OHLCV + server compute
+      let ohlcv = get()._cachedOHLCV
+      if (!ohlcv) {
+        ohlcv = await fetchOHLCV(ticker, '5m')
+        set({ _cachedOHLCV: ohlcv })
+      }
+
+      res = await fetch('/api/compute-optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker, budget: Number(budget), ohlcv }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
@@ -52,7 +91,6 @@ export const useStore = create((set, get) => ({
   // ── Market status ─────────────────────────────────────
   marketStatus: null,
   fetchMarketStatus: async () => {
-    const { ticker } = get()
     try {
       const res = await fetch('/api/market-status')
       const data = await res.json()
