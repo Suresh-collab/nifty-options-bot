@@ -29,22 +29,25 @@ def generate_signal(ticker: str, spot: float, expiry: str,
     confluence_dir = confluence.get("direction", "NEUTRAL")
     strength = confluence.get("strength", "WEAK")
 
-    if confidence == "Low" or abs(score) < 20:
+    # v3: Relaxed thresholds — only AVOID when truly no direction
+    # The combined_score already weights all indicators, so we trust it more
+    if confidence == "Low" and abs(score) < 15:
         direction = "AVOID"
-    elif strength == "WEAK" and abs(score) < 40:
-        # v2: Even if score shows a direction, weak confluence = AVOID
+    elif abs(score) < 10:
+        # Score near zero = genuinely mixed signals
         direction = "AVOID"
     elif score > 0:
         direction = "BUY_CE"
     else:
         direction = "BUY_PE"
 
-    # v2: Cross-check confluence direction with score direction
-    # If they disagree, downgrade to AVOID (conflicting signals = danger)
-    if direction == "BUY_CE" and confluence_dir == "SELL" and confluence_count >= 3:
-        direction = "AVOID"
-    if direction == "BUY_PE" and confluence_dir == "BUY" and confluence_count >= 3:
-        direction = "AVOID"
+    # v3: Only downgrade if confluence STRONGLY disagrees (4+ indicators)
+    # AND the score itself is weak (< 35). Strong scores override.
+    if abs(score) < 35:
+        if direction == "BUY_CE" and confluence_dir == "SELL" and confluence_count >= 4:
+            direction = "AVOID"
+        if direction == "BUY_PE" and confluence_dir == "BUY" and confluence_count >= 4:
+            direction = "AVOID"
 
     # --- Best strike (round to nearest 50 for NIFTY, 100 for SENSEX) ---
     step = 50 if ticker == "NIFTY" else 100

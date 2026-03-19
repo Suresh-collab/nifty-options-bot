@@ -73,6 +73,15 @@ def optimize(budget: float, ticker: str, signal: dict, chain: dict) -> dict:
 
     best = min(pool, key=lambda x: abs(x["strike"] - best_strike))
 
+    # Build alternatives list (other viable strikes, excluding the best)
+    alternatives = [
+        r for r in pool
+        if r["strike"] != best["strike"]
+    ]
+    # Sort alternatives by distance from best strike
+    alternatives.sort(key=lambda x: abs(x["strike"] - best_strike))
+    alternatives = alternatives[:3]  # Top 3 alternatives
+
     return {
         "recommendation":  "TRADE",
         "direction":       direction,
@@ -90,4 +99,5 @@ def optimize(budget: float, ticker: str, signal: dict, chain: dict) -> dict:
         "expiry":          signal.get("expiry", ""),
         "budget_used":     best["total_cost"],
         "budget_remaining": round(budget - best["total_cost"], 2),
+        "alternatives":    alternatives,
     }
