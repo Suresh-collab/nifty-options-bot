@@ -17,6 +17,10 @@
  *     Added panic/capitulation detection (large red candles + high volume).
  *     Increased minimum candle spacing between signals from 3 to 5.
  *     RSI oversold no longer counts as bullish during a crash.
+ * v3: Interval-aware signal density control. 15m (60-day range) was flooding
+ *     with 50+ signals. Now uses per-interval config: wider spacing (12 candles
+ *     for 15m vs 5 for 5m), higher confluence threshold (3.5 vs 3), max signal
+ *     cap (15 for 15m vs 20 for 5m), and higher strong-signal bar (5 vs 4.5).
  */
 
 // ─── EMA ────────────────────────────────────────────────────────────
@@ -227,10 +231,19 @@ function trendStrength(candles, i, lookback = 20) {
 // Only generate buy/sell when multiple indicators agree AND
 // the signal aligns with the broader trend (no counter-trend traps).
 
-export function computeChartSignals(candles) {
+export function computeChartSignals(candles, interval = '5m') {
   if (!candles || candles.length < 30) {
-    return { markers: [], levels: [], tpSlBoxes: [], trendLine: [] }
+    return { markers: [], levels: [], tpSlBoxes: [], trendLine: [], rsiValues: [], pivots: [] }
   }
+
+  // Interval-aware settings to control signal density
+  // 15m fetches 60 days of data (~1600 candles) vs 5m fetches 5 days (~390 candles)
+  const intervalConfig = {
+    '1m':  { minSpacing: 10, maxSignals: 25, confluenceThreshold: 3,   strongThreshold: 4.5 },
+    '5m':  { minSpacing: 5,  maxSignals: 20, confluenceThreshold: 3,   strongThreshold: 4.5 },
+    '15m': { minSpacing: 12, maxSignals: 15, confluenceThreshold: 3.5, strongThreshold: 5   },
+  }
+  const cfg = intervalConfig[interval] || intervalConfig['5m']
 
   const closes = candles.map(c => c.close)
   const rsiValues = rsi(closes, 14)
@@ -307,8 +320,8 @@ export function computeChartSignals(candles) {
 
     // ── CONFLUENCE CHECK ────────────────────────────────────────
     // v2: Raised threshold and added trend alignment requirement
-    let isBuy = bullSignals >= 3 && bearSignals < 1.5
-    let isSell = bearSignals >= 3 && bullSignals < 1.5
+    let isBuy = bullSignals >= cfg.confluenceThreshold && bearSignals < 1.5
+    let isSell = bearSignals >= cfg.confluenceThreshold && bullSignals < 1.5
 
     // v2: BLOCK counter-trend signals during extreme moves
     if (trend.isCrash && isBuy) isBuy = false   // Never BUY during a crash
@@ -318,12 +331,14 @@ export function computeChartSignals(candles) {
     if (trend.isPanic && isBuy) isBuy = false
 
     if (isBuy || isSell) {
-      // v2: Increased minimum spacing from 3 to 5 candles (reduce noise)
-      if (i - lastMarkerIdx < 5) continue
+      // v3: Interval-aware spacing — 15m uses wider gaps to avoid signal flood
+      if (i - lastMarkerIdx < cfg.minSpacing) continue
+      // v3: Cap total signals to keep chart readable
+      if (markers.length >= cfg.maxSignals) continue
       lastMarkerIdx = i
 
       const confidence = isBuy ? bullSignals : bearSignals
-      const isStrong = confidence >= 4.5  // v2: raised from 4 to 4.5
+      const isStrong = confidence >= cfg.strongThreshold
 
       markers.push({
         time: candles[i].time,
@@ -370,5 +385,40 @@ export function computeChartSignals(candles) {
     }
   }).filter(Boolean)
 
-  return { markers, levels: srLevels, tpSlBoxes, trendLine }
+  // ─── Pivot Points (Classic Floor Pivots from previous day) ────────
+  const pivots = computePivots(candles)
+
+  return { markers, levels: srLevels, tpSlBoxes, trendLine, rsiValues, pivots }
+}
+
+// ─── PIVOT POINT CALCULATOR ────────────────────────────────────────
+// Classic floor pivots: PP = (H+L+C)/3, then R1/R2/S1/S2
+function computePivots(candles) {
+  if (candles.length < 20) return []
+
+  // Group candles by day (using UTC date from timestamp)
+  const days = {}
+  for (const c of candles) {
+    const dayKey = Math.floor(c.time / 86400)
+    if (!days[dayKey]) days[dayKey] = { high: -Infinity, low: Infinity, close: 0 }
+    days[dayKey].high = Math.max(days[dayKey].high, c.high)
+    days[dayKey].low = Math.min(days[dayKey].low, c.low)
+    days[dayKey].close = c.close
+  }
+
+  const dayKeys = Object.keys(days).sort()
+  if (dayKeys.length < 2) return []
+
+  // Use previous day's H/L/C to compute today's pivots
+  const prevDay = days[dayKeys[dayKeys.length - 2]]
+  const h = prevDay.high, l = prevDay.low, c = prevDay.close
+  const pp = (h + l + c) / 3
+
+  return [
+    { price: Math.round(pp * 100) / 100, label: 'PP', color: '#a78bfa' },
+    { price: Math.round((2 * pp - l) * 100) / 100, label: 'R1', color: '#ef4444' },
+    { price: Math.round((pp + (h - l)) * 100) / 100, label: 'R2', color: '#ef4444' },
+    { price: Math.round((2 * pp - h) * 100) / 100, label: 'S1', color: '#22c55e' },
+    { price: Math.round((pp - (h - l)) * 100) / 100, label: 'S2', color: '#22c55e' },
+  ]
 }

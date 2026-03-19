@@ -10,7 +10,7 @@ const SYMBOLS = {
  */
 export async function fetchOHLCV(ticker, interval = '5m') {
   const symbol = SYMBOLS[ticker.toUpperCase()] || ticker
-  const range = ['1m', '2m', '5m'].includes(interval) ? '5d' : '60d'
+  const range = interval === '1m' ? '1d' : ['2m', '5m'].includes(interval) ? '5d' : '60d'
 
   // Try direct Yahoo Finance API first, fall back to proxy
   const urls = [

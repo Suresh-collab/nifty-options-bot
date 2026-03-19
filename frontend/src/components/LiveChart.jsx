@@ -5,12 +5,12 @@ import { fetchOHLCV } from '../lib/yahooFetch'
 import { computeChartSignals } from '../lib/chartIndicators'
 
 const INTERVALS = [
+  { label: '1m', value: '1m' },
   { label: '5m', value: '5m' },
   { label: '15m', value: '15m' },
 ]
 
 // IST offset: +5:30 = 19800 seconds
-// Applied here (single point) so ALL data sources display IST on the chart
 const IST_OFFSET = 19800
 
 function toIST(data) {
@@ -19,12 +19,18 @@ function toIST(data) {
 
 export default function LiveChart() {
   const chartRef = useRef(null)
+  const rsiChartRef = useRef(null)
   const containerRef = useRef(null)
   const chartInstance = useRef(null)
+  const rsiChartInstance = useRef(null)
   const candleSeriesRef = useRef(null)
   const volumeSeriesRef = useRef(null)
   const stLineSeriesRef = useRef(null)
+  const rsiSeriesRef = useRef(null)
+  const rsiOverboughtRef = useRef(null)
+  const rsiOversoldRef = useRef(null)
   const srLinesRef = useRef([])
+  const pivotLinesRef = useRef([])
   const lastDataRef = useRef([])
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
@@ -34,6 +40,9 @@ export default function LiveChart() {
   const [lastPrice, setLastPrice] = useState(null)
   const [priceChange, setPriceChange] = useState(0)
   const [showSignals, setShowSignals] = useState(true)
+  const [showRSI, setShowRSI] = useState(false)
+  const [showVolume, setShowVolume] = useState(true)
+  const [showPivots, setShowPivots] = useState(false)
   const [signalStats, setSignalStats] = useState(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
@@ -41,19 +50,37 @@ export default function LiveChart() {
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+      containerRef.current.requestFullscreen().catch(() => {})
     } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {})
+      document.exitFullscreen().catch(() => {})
     }
   }, [])
 
-  // Listen for fullscreen exit via Escape
+  // Sync fullscreen state and resize charts
   useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement)
+    const handler = () => {
+      const fs = !!document.fullscreenElement
+      setIsFullscreen(fs)
+      if (chartInstance.current && chartRef.current) {
+        const mainH = fs ? window.innerHeight - (showRSI ? 250 : 100) : 420
+        chartInstance.current.applyOptions({
+          width: chartRef.current.clientWidth,
+          height: mainH,
+        })
+        chartInstance.current.timeScale().fitContent()
+      }
+      if (rsiChartInstance.current && rsiChartRef.current) {
+        rsiChartInstance.current.applyOptions({
+          width: rsiChartRef.current.clientWidth,
+          height: fs ? 140 : 100,
+        })
+      }
+    }
     document.addEventListener('fullscreenchange', handler)
     return () => document.removeEventListener('fullscreenchange', handler)
-  }, [])
+  }, [showRSI])
 
+  // Create main chart ONCE
   useEffect(() => {
     if (!chartRef.current) return
 
@@ -73,16 +100,14 @@ export default function LiveChart() {
         vertLine: { color: '#475569', labelBackgroundColor: '#334155' },
         horzLine: { color: '#475569', labelBackgroundColor: '#334155' },
       },
-      rightPriceScale: {
-        borderColor: '#334155',
-      },
+      rightPriceScale: { borderColor: '#334155' },
       timeScale: {
         borderColor: '#334155',
         timeVisible: true,
         secondsVisible: false,
       },
       width: chartRef.current.clientWidth,
-      height: isFullscreen ? window.innerHeight - 120 : 420,
+      height: 420,
     })
 
     const candleSeries = chart.addCandlestickSeries({
@@ -99,12 +124,10 @@ export default function LiveChart() {
       priceFormat: { type: 'volume' },
       priceScaleId: '',
     })
-
     volumeSeries.priceScale().applyOptions({
       scaleMargins: { top: 0.85, bottom: 0 },
     })
 
-    // SuperTrend overlay line
     const stLineSeries = chart.addLineSeries({
       lineWidth: 2,
       priceLineVisible: false,
@@ -118,10 +141,15 @@ export default function LiveChart() {
     stLineSeriesRef.current = stLineSeries
 
     const handleResize = () => {
-      if (chartRef.current) {
-        chart.applyOptions({
+      if (chartRef.current && chartInstance.current) {
+        chartInstance.current.applyOptions({
           width: chartRef.current.clientWidth,
-          height: document.fullscreenElement ? window.innerHeight - 120 : 420,
+          height: document.fullscreenElement ? window.innerHeight - 250 : 420,
+        })
+      }
+      if (rsiChartRef.current && rsiChartInstance.current) {
+        rsiChartInstance.current.applyOptions({
+          width: rsiChartRef.current.clientWidth,
         })
       }
     }
@@ -135,23 +163,141 @@ export default function LiveChart() {
       volumeSeriesRef.current = null
       stLineSeriesRef.current = null
       srLinesRef.current = []
+      pivotLinesRef.current = []
     }
-  }, [isFullscreen])
+  }, [])
+
+  // Create/destroy RSI sub-chart based on toggle
+  useEffect(() => {
+    if (showRSI && rsiChartRef.current && !rsiChartInstance.current) {
+      const rsiChart = createChart(rsiChartRef.current, {
+        layout: {
+          background: { color: '#1e293b' },
+          textColor: '#94a3b8',
+          fontSize: 10,
+          fontFamily: 'monospace',
+        },
+        grid: {
+          vertLines: { color: '#334155' },
+          horzLines: { color: '#334155' },
+        },
+        crosshair: { mode: 0 },
+        rightPriceScale: {
+          borderColor: '#334155',
+          scaleMargins: { top: 0.05, bottom: 0.05 },
+        },
+        timeScale: {
+          borderColor: '#334155',
+          timeVisible: true,
+          secondsVisible: false,
+          visible: false,
+        },
+        width: rsiChartRef.current.clientWidth,
+        height: 100,
+      })
+
+      const rsiLine = rsiChart.addLineSeries({
+        color: '#a78bfa',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: 'RSI',
+      })
+
+      // Overbought/oversold reference lines
+      const ob = rsiChart.addLineSeries({
+        color: '#ef444460',
+        lineWidth: 1,
+        lineStyle: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      })
+      const os = rsiChart.addLineSeries({
+        color: '#22c55e60',
+        lineWidth: 1,
+        lineStyle: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      })
+
+      rsiChartInstance.current = rsiChart
+      rsiSeriesRef.current = rsiLine
+      rsiOverboughtRef.current = ob
+      rsiOversoldRef.current = os
+
+      // Sync crosshair between main and RSI charts
+      if (chartInstance.current) {
+        chartInstance.current.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (range && rsiChartInstance.current) {
+            rsiChartInstance.current.timeScale().setVisibleLogicalRange(range)
+          }
+        })
+      }
+
+      // If we already have data, populate the RSI chart
+      if (lastDataRef.current.length > 0) {
+        applyRSIData(lastDataRef.current)
+      }
+    }
+
+    if (!showRSI && rsiChartInstance.current) {
+      rsiChartInstance.current.remove()
+      rsiChartInstance.current = null
+      rsiSeriesRef.current = null
+      rsiOverboughtRef.current = null
+      rsiOversoldRef.current = null
+    }
+  }, [showRSI])
+
+  // Apply RSI data to sub-chart
+  const applyRSIData = useCallback((data) => {
+    if (!rsiSeriesRef.current || !rsiChartInstance.current) return
+    const result = computeChartSignals(data, interval)
+    const rsiVals = result.rsiValues
+    if (!rsiVals) return
+
+    const rsiData = []
+    for (let i = 0; i < data.length; i++) {
+      if (rsiVals[i] !== null && rsiVals[i] !== undefined) {
+        rsiData.push({ time: data[i].time, value: rsiVals[i] })
+      }
+    }
+    rsiSeriesRef.current.setData(rsiData)
+
+    // Draw overbought (70) and oversold (30) lines
+    if (rsiData.length > 1 && rsiOverboughtRef.current) {
+      const refData = [
+        { time: rsiData[0].time, value: 70 },
+        { time: rsiData[rsiData.length - 1].time, value: 70 },
+      ]
+      rsiOverboughtRef.current.setData(refData)
+      rsiOversoldRef.current.setData([
+        { time: rsiData[0].time, value: 30 },
+        { time: rsiData[rsiData.length - 1].time, value: 30 },
+      ])
+    }
+  }, [interval])
 
   const applySignals = useCallback((data) => {
-    if (!showSignals || !candleSeriesRef.current || !chartInstance.current) return
+    if (!candleSeriesRef.current || !chartInstance.current) return
 
     try {
-      const { markers, levels, tpSlBoxes, trendLine } = computeChartSignals(data)
+      const { markers, levels, trendLine, pivots } = computeChartSignals(data, interval)
 
-      // Apply buy/sell markers
-      candleSeriesRef.current.setMarkers(markers)
-
-      // Apply SuperTrend line with color segments
-      if (stLineSeriesRef.current && trendLine.length > 0) {
-        stLineSeriesRef.current.setData(
-          trendLine.map(p => ({ time: p.time, value: p.value, color: p.color }))
-        )
+      // Signals (markers + trend line)
+      if (showSignals) {
+        candleSeriesRef.current.setMarkers(markers)
+        if (stLineSeriesRef.current && trendLine.length > 0) {
+          stLineSeriesRef.current.setData(
+            trendLine.map(p => ({ time: p.time, value: p.value, color: p.color }))
+          )
+        }
+      } else {
+        candleSeriesRef.current.setMarkers([])
+        stLineSeriesRef.current?.setData([])
       }
 
       // Remove old S/R lines
@@ -160,35 +306,75 @@ export default function LiveChart() {
       }
       srLinesRef.current = []
 
-      // Draw support/resistance levels
-      for (const level of levels) {
-        const priceLine = candleSeriesRef.current.createPriceLine({
-          price: level.price,
-          color: level.type === 'support' ? '#22c55e50' : '#ef444450',
-          lineWidth: 1,
-          lineStyle: 2, // dashed
-          axisLabelVisible: true,
-          title: `${level.type === 'support' ? 'S' : 'R'} ${level.price.toFixed(0)}`,
-        })
-        srLinesRef.current.push(priceLine)
+      // Draw S/R levels if signals are on — more visible now
+      if (showSignals) {
+        const limitedLevels = levels.slice(0, 4)
+        for (const level of limitedLevels) {
+          const priceLine = candleSeriesRef.current.createPriceLine({
+            price: level.price,
+            color: level.type === 'support' ? '#22c55e90' : '#ef444490',
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: `${level.type === 'support' ? 'S' : 'R'} ${level.price.toFixed(0)}`,
+          })
+          srLinesRef.current.push(priceLine)
+        }
       }
 
-      // Update signal stats
-      const buyCount = markers.filter(m => m.text.includes('BUY')).length
-      const sellCount = markers.filter(m => m.text.includes('SELL')).length
-      const strongCount = markers.filter(m => m.text.includes('STRONG')).length
-      setSignalStats({
-        total: markers.length,
-        buys: buyCount,
-        sells: sellCount,
-        strong: strongCount,
-        levels: levels.length,
-        lastSignal: markers.length > 0 ? markers[markers.length - 1] : null,
-      })
+      // Remove old Pivot lines
+      for (const line of pivotLinesRef.current) {
+        try { candleSeriesRef.current.removePriceLine(line) } catch {}
+      }
+      pivotLinesRef.current = []
+
+      // Draw Pivot levels if enabled
+      if (showPivots && pivots && pivots.length > 0) {
+        for (const p of pivots) {
+          const priceLine = candleSeriesRef.current.createPriceLine({
+            price: p.price,
+            color: p.color,
+            lineWidth: 1,
+            lineStyle: p.label === 'PP' ? 0 : 2,
+            axisLabelVisible: true,
+            title: p.label,
+          })
+          pivotLinesRef.current.push(priceLine)
+        }
+      }
+
+      // Volume visibility
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current.applyOptions({
+          visible: showVolume,
+        })
+      }
+
+      // RSI sub-chart data
+      if (showRSI) {
+        applyRSIData(data)
+      }
+
+      // Signal stats
+      if (showSignals) {
+        const buyCount = markers.filter(m => m.text.includes('BUY')).length
+        const sellCount = markers.filter(m => m.text.includes('SELL')).length
+        const strongCount = markers.filter(m => m.text.includes('STRONG')).length
+        setSignalStats({
+          total: markers.length,
+          buys: buyCount,
+          sells: sellCount,
+          strong: strongCount,
+          levels: Math.min(levels.length, 4),
+          lastSignal: markers.length > 0 ? markers[markers.length - 1] : null,
+        })
+      } else {
+        setSignalStats(null)
+      }
     } catch (e) {
       console.warn('Signal computation error:', e)
     }
-  }, [showSignals])
+  }, [showSignals, showPivots, showVolume, showRSI, interval, applyRSIData])
 
   const fetchChart = useCallback(async (fullLoad = false) => {
     if (fullLoad) setLoading(true)
@@ -207,7 +393,6 @@ export default function LiveChart() {
 
       if (!candleSeriesRef.current || data.length === 0) return
 
-      // Convert all timestamps to IST for display (single point of conversion)
       data = toIST(data)
 
       const prev = lastDataRef.current
@@ -267,34 +452,26 @@ export default function LiveChart() {
     isFirstLoad.current = true
     fetchChart(true)
 
-    const iv = window.setInterval(() => fetchChart(false), 10000)
+    // 1m refreshes faster (5s), others at 10s
+    const refreshMs = interval === '1m' ? 5000 : 10000
+    const iv = window.setInterval(() => fetchChart(false), refreshMs)
     return () => window.clearInterval(iv)
   }, [ticker, interval, fetchChart])
 
-  // Re-apply signals when toggle changes
+  // Re-apply overlays when any toggle changes
   useEffect(() => {
     if (lastDataRef.current.length > 0) {
-      if (showSignals) {
-        applySignals(lastDataRef.current)
-      } else {
-        candleSeriesRef.current?.setMarkers([])
-        stLineSeriesRef.current?.setData([])
-        for (const line of srLinesRef.current) {
-          try { candleSeriesRef.current?.removePriceLine(line) } catch {}
-        }
-        srLinesRef.current = []
-        setSignalStats(null)
-      }
+      applySignals(lastDataRef.current)
     }
-  }, [showSignals, applySignals])
+  }, [showSignals, showPivots, showVolume, showRSI, applySignals])
 
   const changeColor = priceChange >= 0 ? 'text-terminal-green' : 'text-terminal-red'
   const changeSign = priceChange >= 0 ? '+' : ''
 
   return (
-    <div ref={containerRef} className={`bg-terminal-surface border border-terminal-border rounded-lg overflow-hidden ${isFullscreen ? 'bg-terminal-bg' : ''}`}>
+    <div ref={containerRef} className={`bg-terminal-surface border border-terminal-border rounded-lg overflow-hidden ${isFullscreen ? '!bg-terminal-bg flex flex-col' : ''}`}>
       {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border shrink-0">
         <div className="flex items-center gap-3">
           <span className="font-mono text-sm font-bold text-terminal-text">{ticker}</span>
           {lastPrice && (
@@ -315,8 +492,8 @@ export default function LiveChart() {
           <span className="text-xs font-mono text-terminal-blue">IST</span>
           {loading && <span className="text-xs font-mono text-terminal-amber animate-pulse">Loading...</span>}
         </div>
-        <div className="flex items-center gap-2">
-          {/* Signal toggle */}
+        <div className="flex items-center gap-1.5">
+          {/* Indicator toggles */}
           <button
             onClick={() => setShowSignals(!showSignals)}
             className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
@@ -324,10 +501,44 @@ export default function LiveChart() {
                 ? 'bg-terminal-green/20 text-terminal-green border border-terminal-green/30'
                 : 'text-terminal-dim hover:text-terminal-text hover:bg-terminal-border border border-transparent'
             }`}
-            title="Toggle buy/sell signals, SuperTrend, and S/R levels"
+            title="Buy/Sell signals, SuperTrend, S/R levels"
           >
-            {showSignals ? 'Signals ON' : 'Signals OFF'}
+            Signals {showSignals ? 'ON' : 'OFF'}
           </button>
+          <button
+            onClick={() => setShowRSI(!showRSI)}
+            className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+              showRSI
+                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                : 'text-terminal-dim hover:text-terminal-text hover:bg-terminal-border border border-transparent'
+            }`}
+            title="RSI (14) sub-chart: Overbought >70, Oversold <30"
+          >
+            RSI
+          </button>
+          <button
+            onClick={() => setShowPivots(!showPivots)}
+            className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+              showPivots
+                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                : 'text-terminal-dim hover:text-terminal-text hover:bg-terminal-border border border-transparent'
+            }`}
+            title="Daily Pivot Points: PP, R1, R2, S1, S2"
+          >
+            Pivots
+          </button>
+          <button
+            onClick={() => setShowVolume(!showVolume)}
+            className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+              showVolume
+                ? 'bg-terminal-blue/20 text-terminal-blue border border-terminal-blue/30'
+                : 'text-terminal-dim hover:text-terminal-text hover:bg-terminal-border border border-transparent'
+            }`}
+            title="Volume bars at the bottom of chart"
+          >
+            Vol
+          </button>
+          <span className="w-px h-4 bg-terminal-border mx-0.5" />
           {/* Interval buttons */}
           {INTERVALS.map(i => (
             <button
@@ -342,21 +553,20 @@ export default function LiveChart() {
               {i.label}
             </button>
           ))}
-          {/* Fullscreen button */}
           <button
             onClick={toggleFullscreen}
             className="px-2 py-0.5 text-xs font-mono rounded text-terminal-dim hover:text-terminal-text hover:bg-terminal-border transition-colors border border-transparent"
             title={isFullscreen ? 'Exit fullscreen (Esc)' : 'View chart in fullscreen'}
           >
-            {isFullscreen ? '⊠ Exit' : '⛶ Fullscreen'}
+            {isFullscreen ? '✕ Exit' : '⛶ Fullscreen'}
           </button>
         </div>
       </div>
 
-      {/* Signal stats bar with explanations */}
+      {/* Signal stats bar */}
       {showSignals && signalStats && (
-        <div className="px-4 py-1.5 border-b border-terminal-border/50 flex items-center gap-4 text-[10px] font-mono">
-          <span className="text-terminal-dim">SIGNALS:</span>
+        <div className="px-4 py-1.5 border-b border-terminal-border/50 flex items-center gap-4 text-[10px] font-mono shrink-0">
+          <span className="text-terminal-dim">TREND SIGNALS:</span>
           <span className="text-terminal-green">{signalStats.buys} BUY</span>
           <span className="text-terminal-red">{signalStats.sells} SELL</span>
           {signalStats.strong > 0 && (
@@ -372,31 +582,56 @@ export default function LiveChart() {
               </span>
             </>
           )}
+          <span className="text-terminal-dim ml-auto">Based on past trends, not predictions</span>
         </div>
       )}
 
       {error && (
-        <div className="px-4 py-2 text-xs font-mono text-terminal-red">
+        <div className="px-4 py-2 text-xs font-mono text-terminal-red shrink-0">
           Chart error: {error}
         </div>
       )}
-      <div ref={chartRef} />
 
-      {/* Legend with explanations */}
-      {showSignals && (
-        <div className="px-4 py-2 border-t border-terminal-border/50 space-y-1.5">
-          <div className="flex items-center gap-4 text-[10px] font-mono text-terminal-dim flex-wrap">
-            <span><span className="inline-block w-3 h-0.5 bg-terminal-green mr-1 align-middle" />SuperTrend Up</span>
-            <span><span className="inline-block w-3 h-0.5 bg-terminal-red mr-1 align-middle" />SuperTrend Down</span>
-            <span><span className="text-terminal-green mr-1">▲</span>Buy Signal</span>
-            <span><span className="text-terminal-red mr-1">▼</span>Sell Signal</span>
-            <span><span className="inline-block w-3 h-0.5 bg-terminal-green/50 mr-1 align-middle" />Support (floor)</span>
-            <span><span className="inline-block w-3 h-0.5 bg-terminal-red/50 mr-1 align-middle" />Resistance (ceiling)</span>
+      {/* Main chart */}
+      <div ref={chartRef} className={isFullscreen ? 'flex-1' : ''} />
+
+      {/* RSI sub-chart */}
+      {showRSI && (
+        <div className="border-t border-terminal-border/50">
+          <div className="px-4 py-0.5 flex items-center gap-3 text-[10px] font-mono text-terminal-dim bg-terminal-bg/30">
+            <span className="text-purple-400">RSI (14)</span>
+            <span className="text-terminal-red/60">70 Overbought</span>
+            <span className="text-terminal-green/60">30 Oversold</span>
           </div>
-          <div className="text-[10px] font-mono text-terminal-dim/70 leading-relaxed">
-            <span className="text-terminal-green">S (Support)</span> = price level where stock tends to bounce up (good to buy near).{' '}
-            <span className="text-terminal-red">R (Resistance)</span> = price level where stock tends to fall back (consider selling near).{' '}
-            Signals appear only when 3+ indicators agree (reduces false signals).
+          <div ref={rsiChartRef} />
+        </div>
+      )}
+
+      {/* Legend */}
+      {(showSignals || showPivots) && (
+        <div className="px-4 py-2 border-t border-terminal-border/50 space-y-1 shrink-0">
+          <div className="flex items-center gap-4 text-[10px] font-mono text-terminal-dim flex-wrap">
+            {showSignals && (
+              <>
+                <span><span className="inline-block w-3 h-0.5 bg-terminal-green mr-1 align-middle" />Uptrend</span>
+                <span><span className="inline-block w-3 h-0.5 bg-terminal-red mr-1 align-middle" />Downtrend</span>
+                <span><span className="text-terminal-green mr-1">▲</span>Buy zone</span>
+                <span><span className="text-terminal-red mr-1">▼</span>Sell zone</span>
+                <span><span className="inline-block w-3 h-0.5 bg-terminal-green/70 mr-1 align-middle" />Support</span>
+                <span><span className="inline-block w-3 h-0.5 bg-terminal-red/70 mr-1 align-middle" />Resistance</span>
+              </>
+            )}
+            {showPivots && (
+              <>
+                <span className="text-purple-400">PP</span>
+                <span className="text-terminal-red">R1 R2</span>
+                <span className="text-terminal-green">S1 S2</span>
+              </>
+            )}
+          </div>
+          <div className="text-[10px] font-mono text-terminal-dim/60 leading-relaxed">
+            These are <b>trend-following</b> signals based on past price action — they show where the trend has been, not where it will go.
+            Use them alongside news, market mood, and your own judgment. Never rely on any single indicator.
           </div>
         </div>
       )}
