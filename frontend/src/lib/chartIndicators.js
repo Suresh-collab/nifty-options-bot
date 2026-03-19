@@ -340,16 +340,16 @@ export function computeChartSignals(candles, interval = '5m') {
       const confidence = isBuy ? bullSignals : bearSignals
       const isStrong = confidence >= cfg.strongThreshold
 
-      // TradingView-style: large colored labels, always size 2 for visibility
+      // TradingView-style: max size markers with bold labels
       markers.push({
         time: candles[i].time,
         position: isBuy ? 'belowBar' : 'aboveBar',
         color: isBuy ? '#22c55e' : '#ef4444',
         shape: isBuy ? 'arrowUp' : 'arrowDown',
         text: isBuy
-          ? (isStrong ? '⬆ STRONG BUY' : '▲ Buy')
-          : (isStrong ? '⬇ STRONG SELL' : '▼ Sell'),
-        size: 2,  // Always large for visibility (TradingView style)
+          ? (isStrong ? 'STRONG BUY ▲' : 'BUY ▲')
+          : (isStrong ? 'STRONG SELL ▼' : 'SELL ▼'),
+        size: 3,  // Max practical size for lightweight-charts markers
       })
 
       // Generate TP/SL box for this signal

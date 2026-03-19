@@ -17,6 +17,14 @@ function toIST(data) {
   return data.map(d => ({ ...d, time: d.time + IST_OFFSET }))
 }
 
+/** Cap volume at 95th percentile to prevent outlier compression */
+function getVolumeCap(data) {
+  const volumes = data.map(d => d.volume || 0).filter(v => v > 0)
+  if (volumes.length === 0) return 1
+  const sorted = [...volumes].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1] || 1
+}
+
 export default function LiveChart() {
   const chartRef = useRef(null)
   const rsiChartRef = useRef(null)
@@ -39,6 +47,7 @@ export default function LiveChart() {
   const srLinesRef = useRef([])
   const pivotLinesRef = useRef([])
   const lastDataRef = useRef([])
+  const volCapRef = useRef(1)
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
   const [interval, setInterval_] = useState('5m')
@@ -113,7 +122,7 @@ export default function LiveChart() {
       },
       rightPriceScale: {
         borderColor: '#1e293b',
-        scaleMargins: { top: 0.05, bottom: 0.2 },
+        scaleMargins: { top: 0.05, bottom: 0.28 },
       },
       timeScale: {
         borderColor: '#1e293b',
@@ -138,9 +147,12 @@ export default function LiveChart() {
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
       priceScaleId: 'vol',
+      color: '#26a69a',
     })
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.7, bottom: 0 },
+    chart.priceScale('vol').applyOptions({
+      scaleMargins: { top: 0.65, bottom: 0 },
+      visible: false,
+      drawTicks: false,
     })
 
     const stLineSeries = chart.addLineSeries({
@@ -490,11 +502,14 @@ export default function LiveChart() {
         candleSeriesRef.current.setData(
           data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }))
         )
+        // Normalize volume: cap at 95th percentile so outliers don't crush other bars
+        const vCap = getVolumeCap(data)
+        volCapRef.current = vCap
         volumeSeriesRef.current.setData(
           data.map(d => ({
             time: d.time,
-            value: d.volume,
-            color: d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)',
+            value: Math.min(d.volume || 0, vCap * 1.5),
+            color: d.close >= d.open ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
           }))
         )
         applySignals(data)
@@ -509,8 +524,9 @@ export default function LiveChart() {
           if (d.time >= lastOldTime) {
             candleSeriesRef.current.update({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })
             volumeSeriesRef.current.update({
-              time: d.time, value: d.volume,
-              color: d.close >= d.open ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)',
+              time: d.time,
+              value: Math.min(d.volume || 0, (volCapRef.current || d.volume) * 1.5),
+              color: d.close >= d.open ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
             })
           }
         }
