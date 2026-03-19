@@ -1,17 +1,19 @@
 import { useEffect } from 'react'
 import { useStore } from './store'
+import TickerBar from './components/TickerBar'
 import MarketStatusBar from './components/MarketStatusBar'
 import TickerSelector from './components/TickerSelector'
 import SignalCard from './components/SignalCard'
 import IndicatorGrid from './components/IndicatorGrid'
 import BudgetOptimizer from './components/BudgetOptimizer'
+import OptionChart from './components/OptionChart'
 import TradeConfirmModal from './components/TradeConfirmModal'
 import TradeHistory from './components/TradeHistory'
 import LiveChart from './components/LiveChart'
 import MarketNews from './components/MarketNews'
 
 export default function App() {
-  const { fetchSignal, fetchMarketStatus, fetchTradeHistory } = useStore()
+  const { fetchSignal, fetchMarketStatus, fetchTradeHistory, ticker, signalData } = useStore()
 
   useEffect(() => {
     fetchSignal()
@@ -29,54 +31,60 @@ export default function App() {
     return () => clearInterval(iv)
   }, [])
 
+  const expiry = signalData?.signal?.expiry
+
   return (
-    <div className="min-h-screen bg-terminal-bg">
+    <div className="min-h-screen bg-[#0a0e1a]">
+      {/* Scrolling ticker bar (Groww-style) */}
+      <TickerBar />
+
       {/* Top nav */}
-      <header className="bg-terminal-surface border-b border-terminal-border">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <header className="bg-[#0f172a] border-b border-[#1e293b]">
+        <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 rounded bg-terminal-blue/20 border border-terminal-blue flex items-center justify-center">
               <span className="text-terminal-blue text-xs font-mono font-bold">N</span>
             </div>
-            <span className="font-mono font-bold text-terminal-text tracking-wide">NIFTY OPTIONS BOT</span>
-            <span className="text-xs font-mono text-terminal-dim border border-terminal-border px-2 py-0.5 rounded">
-              PAPER TRADING v1.0
+            <span className="font-mono font-bold text-white tracking-wide">NIFTY OPTIONS BOT</span>
+            <span className="text-[10px] font-mono text-[#475569] border border-[#334155] px-2 py-0.5 rounded">
+              PAPER TRADING v2.0
             </span>
           </div>
-          <div className="text-xs font-mono text-terminal-dim">
-            Powered by Claude AI · No broker required
+          <div className="text-[10px] font-mono text-[#475569]">
+            Powered by AI · No broker required
           </div>
         </div>
       </header>
 
       <MarketStatusBar />
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-[1400px] mx-auto px-4 py-4 space-y-4">
         {/* Controls row */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <TickerSelector />
-          <div className="text-xs font-mono text-terminal-dim">
-            ⚠ For educational purposes only — not financial advice
+          <div className="text-[10px] font-mono text-[#475569]">
+            For educational purposes only — not financial advice
           </div>
         </div>
 
-        {/* Main grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Left col: chart + signal + indicators */}
-          <div className="lg:col-span-2 space-y-4">
+        {/* Main grid: 3 columns */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Left col: chart + signal (8 cols) */}
+          <div className="lg:col-span-8 space-y-4">
             <LiveChart />
             <SignalCard />
             <div>
-              <div className="text-xs font-mono text-terminal-dim uppercase tracking-widest mb-3">
+              <div className="text-[10px] font-mono text-[#475569] uppercase tracking-widest mb-2">
                 Technical Indicators
               </div>
               <IndicatorGrid />
             </div>
           </div>
 
-          {/* Right col: budget optimizer + news */}
-          <div className="space-y-4">
+          {/* Right col: optimizer + option chart + news (4 cols) */}
+          <div className="lg:col-span-4 space-y-4">
             <BudgetOptimizer />
+            <OptionChart ticker={ticker} expiry={expiry} />
             <MarketNews />
           </div>
         </div>
@@ -85,7 +93,7 @@ export default function App() {
         <TradeHistory />
 
         {/* Disclaimer */}
-        <div className="text-xs font-mono text-terminal-dim/60 text-center pb-4">
+        <div className="text-[10px] font-mono text-[#334155] text-center pb-4">
           This tool is for educational and paper trading purposes only.
           Options trading involves significant risk. Always do your own research.
           Not SEBI registered. Not financial advice.
