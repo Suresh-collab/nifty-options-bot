@@ -42,10 +42,27 @@ def get_next_expiry(ticker: str) -> datetime:
     expiry = now + timedelta(days=days_ahead)
     return expiry.replace(hour=15, minute=30, second=0, microsecond=0)
 
+def _fallback_chain(ticker: str) -> dict:
+    """Return a sensible fallback when NSE API is unreachable (e.g., non-Indian IP)."""
+    return {
+        "ticker": ticker,
+        "spot": 0,
+        "expiry": get_next_expiry(ticker).strftime("%d-%b-%Y"),
+        "pcr": 1.0,
+        "max_pain": 0,
+        "total_ce_oi": 0,
+        "total_pe_oi": 0,
+        "strikes": [],
+        "fetched_at": datetime.now().isoformat(),
+        "fallback": True,
+    }
+
+
 def fetch_option_chain(ticker: str) -> dict:
     """
     Fetch raw option chain data from NSE.
     Returns parsed chain with strikes, OI, IV, LTP for CE and PE.
+    Falls back to defaults if NSE is unreachable (non-Indian IP).
     """
     cache_key = f"chain_{ticker}"
     cached = _cache_get(cache_key)
@@ -57,11 +74,17 @@ def fetch_option_chain(ticker: str) -> dict:
         raise ValueError(f"Unknown ticker: {ticker}")
 
     # NSE requires a session cookie — first hit the homepage
-    with httpx.Client(headers=NSE_HEADERS, timeout=15, follow_redirects=True) as client:
-        client.get("https://www.nseindia.com", timeout=10)
-        resp = client.get(url, timeout=10)
-        resp.raise_for_status()
-        raw = resp.json()
+    # NSE blocks non-Indian IPs, so we fall back gracefully
+    try:
+        with httpx.Client(headers=NSE_HEADERS, timeout=8, follow_redirects=True) as client:
+            client.get("https://www.nseindia.com", timeout=5)
+            resp = client.get(url, timeout=5)
+            resp.raise_for_status()
+            raw = resp.json()
+    except Exception:
+        result = _fallback_chain(ticker)
+        _cache_set(cache_key, result)
+        return result
 
     records = raw.get("records", {})
     data = records.get("data", [])

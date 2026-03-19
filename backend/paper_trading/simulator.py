@@ -3,7 +3,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "paper_trades.db"
+import os
+
+# On Vercel, filesystem is read-only except /tmp
+if os.environ.get("VERCEL"):
+    DB_PATH = Path("/tmp/paper_trades.db")
+else:
+    DB_PATH = Path(__file__).parent.parent / "paper_trades.db"
 
 def _get_conn():
     conn = sqlite3.connect(str(DB_PATH))
