@@ -45,6 +45,7 @@ export default function LiveChart() {
   const [showPivots, setShowPivots] = useState(false)
   const [signalStats, setSignalStats] = useState(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [crosshairData, setCrosshairData] = useState(null)
 
   // Fullscreen toggle
   const toggleFullscreen = useCallback(() => {
@@ -125,20 +126,43 @@ export default function LiveChart() {
       priceScaleId: '',
     })
     volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.85, bottom: 0 },
+      scaleMargins: { top: 0.75, bottom: 0 },
     })
 
     const stLineSeries = chart.addLineSeries({
       lineWidth: 2,
       priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
+      lastValueVisible: true,
+      crosshairMarkerVisible: true,
+      title: 'SuperTrend',
     })
 
     chartInstance.current = chart
     candleSeriesRef.current = candleSeries
     volumeSeriesRef.current = volumeSeries
     stLineSeriesRef.current = stLineSeries
+
+    // Crosshair hover — show OHLCV + indicator values
+    chart.subscribeCrosshairMove(param => {
+      if (!param.time || !param.seriesData) {
+        setCrosshairData(null)
+        return
+      }
+      const candle = param.seriesData.get(candleSeries)
+      const vol = param.seriesData.get(volumeSeries)
+      const st = param.seriesData.get(stLineSeries)
+      if (candle) {
+        setCrosshairData({
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: vol?.value,
+          supertrend: st?.value,
+          isUp: candle.close >= candle.open,
+        })
+      }
+    })
 
     const handleResize = () => {
       if (chartRef.current && chartInstance.current) {
@@ -406,7 +430,7 @@ export default function LiveChart() {
           data.map(d => ({
             time: d.time,
             value: d.volume,
-            color: d.close >= d.open ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)',
+            color: d.close >= d.open ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
           }))
         )
 
@@ -426,7 +450,7 @@ export default function LiveChart() {
             volumeSeriesRef.current.update({
               time: d.time,
               value: d.volume,
-              color: d.close >= d.open ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)',
+              color: d.close >= d.open ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
             })
           }
         }
@@ -589,6 +613,33 @@ export default function LiveChart() {
       {error && (
         <div className="px-4 py-2 text-xs font-mono text-terminal-red shrink-0">
           Chart error: {error}
+        </div>
+      )}
+
+      {/* Crosshair OHLCV info bar */}
+      {crosshairData && (
+        <div className="px-4 py-1 flex items-center gap-3 text-[10px] font-mono shrink-0 bg-terminal-bg/40">
+          <span className="text-terminal-dim">O</span>
+          <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.open?.toFixed(2)}</span>
+          <span className="text-terminal-dim">H</span>
+          <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.high?.toFixed(2)}</span>
+          <span className="text-terminal-dim">L</span>
+          <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.low?.toFixed(2)}</span>
+          <span className="text-terminal-dim">C</span>
+          <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.close?.toFixed(2)}</span>
+          {crosshairData.volume != null && (
+            <>
+              <span className="text-terminal-dim">Vol</span>
+              <span className="text-terminal-blue">{Number(crosshairData.volume).toLocaleString('en-IN')}</span>
+            </>
+          )}
+          {crosshairData.supertrend != null && (
+            <>
+              <span className="text-terminal-dim">|</span>
+              <span className="text-purple-400">SuperTrend</span>
+              <span className="text-terminal-text">{crosshairData.supertrend.toFixed(2)}</span>
+            </>
+          )}
         </div>
       )}
 
