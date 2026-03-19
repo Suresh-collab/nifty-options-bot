@@ -1,5 +1,10 @@
 import sys
 import os
+import importlib.util
+
+# Add the backend directory to the Python path for sub-imports (data, indicators, etc.)
+backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.insert(0, backend_dir)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,23 +19,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Test what packages are available
-_pkg_status = {}
-for pkg in ["numpy", "pandas", "yfinance", "httpx", "aiosqlite"]:
-    try:
-        __import__(pkg)
-        _pkg_status[pkg] = "ok"
-    except Exception as e:
-        _pkg_status[pkg] = str(e)
-
-backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+# Load backend/api/routes.py by file path to avoid conflict with this api/ directory
+spec = importlib.util.spec_from_file_location(
+    "backend_routes",
+    os.path.join(backend_dir, "api", "routes.py")
+)
+routes_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(routes_mod)
+app.include_router(routes_mod.router, prefix="/api")
 
 
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "packages": _pkg_status,
-        "backend_dir_exists": os.path.isdir(backend_dir),
-        "routes_exists": os.path.isfile(os.path.join(backend_dir, "api", "routes.py")),
-    }
+    return {"status": "ok", "env": "vercel"}
