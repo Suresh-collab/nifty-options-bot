@@ -158,6 +158,34 @@ def compute_indicators(df: pd.DataFrame, pcr: float = 1.0, iv: float = 20.0) -> 
     else:
         confidence = "Low"
 
+    # --- Confluence count: how many indicators agree ---
+    buy_signals = sum(1 for s in [supertrend_signal, macd_signal, rsi_signal, pcr_signal, bb_signal]
+                      if s in ("BUY", "BULLISH", "OVERSOLD"))
+    sell_signals = sum(1 for s in [supertrend_signal, macd_signal, rsi_signal, pcr_signal, bb_signal]
+                       if s in ("SELL", "BEARISH", "OVERBOUGHT"))
+    confluence = max(buy_signals, sell_signals)
+    confluence_direction = "BUY" if buy_signals > sell_signals else "SELL" if sell_signals > buy_signals else "NEUTRAL"
+
+    # Signal strength: weak (1-2 agree), moderate (3 agree), strong (4-5 agree)
+    if confluence >= 4:
+        signal_strength = "STRONG"
+    elif confluence >= 3:
+        signal_strength = "MODERATE"
+    else:
+        signal_strength = "WEAK"
+
+    # Volume trend (if available in dataframe)
+    vol_trend = "NEUTRAL"
+    if "Volume" in df.columns and len(df) >= 20:
+        avg_vol = df["Volume"].iloc[-20:].mean()
+        last_vol = float(df["Volume"].iloc[-1])
+        if avg_vol > 0:
+            vol_ratio = last_vol / avg_vol
+            if vol_ratio > 1.5:
+                vol_trend = "HIGH"
+            elif vol_ratio < 0.5:
+                vol_trend = "LOW"
+
     return {
         "rsi": {"value": round(rsi_val, 1), "signal": rsi_signal},
         "macd": {"value": round(macd_val, 2), "signal": macd_signal},
@@ -172,4 +200,12 @@ def compute_indicators(df: pd.DataFrame, pcr: float = 1.0, iv: float = 20.0) -> 
         "iv": {"value": iv},
         "combined_score": score,
         "confidence": confidence,
+        "confluence": {
+            "count": confluence,
+            "direction": confluence_direction,
+            "strength": signal_strength,
+            "buy_count": buy_signals,
+            "sell_count": sell_signals,
+        },
+        "volume_trend": vol_trend,
     }

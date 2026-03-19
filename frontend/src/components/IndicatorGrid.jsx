@@ -136,6 +136,63 @@ export default function IndicatorGrid() {
           {maxPain && signalData.spot ? `Gap: ${fmt(Math.abs(signalData.spot - maxPain) / signalData.spot * 100)}%` : 'NSE data unavailable'}
         </div>
       </MiniCard>
+
+      {/* Confluence meter - multi-indicator agreement */}
+      {ind.confluence && (
+        <MiniCard label="Signal Confluence">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className={`text-lg font-mono font-bold ${
+              ind.confluence.strength === 'STRONG' ? 'text-terminal-green' :
+              ind.confluence.strength === 'MODERATE' ? 'text-terminal-amber' :
+              'text-terminal-dim'
+            }`}>
+              {ind.confluence.count}/5
+            </span>
+            <SignalBadge signal={ind.confluence.direction === 'NEUTRAL' ? 'NEUTRAL' :
+              ind.confluence.direction === 'BUY' ? 'BULLISH' : 'BEARISH'} />
+          </div>
+          <div className="flex gap-0.5 mb-1.5">
+            {[1,2,3,4,5].map(i => (
+              <div key={i} className={`flex-1 h-1.5 rounded-sm ${
+                i <= ind.confluence.count
+                  ? (ind.confluence.direction === 'BUY' ? 'bg-terminal-green' :
+                     ind.confluence.direction === 'SELL' ? 'bg-terminal-red' : 'bg-terminal-amber')
+                  : 'bg-terminal-muted'
+              }`} />
+            ))}
+          </div>
+          <div className="flex justify-between text-[10px] font-mono text-terminal-dim">
+            <span>{ind.confluence.buy_count} bullish</span>
+            <span className={`font-bold ${
+              ind.confluence.strength === 'STRONG' ? 'text-terminal-green' :
+              ind.confluence.strength === 'MODERATE' ? 'text-terminal-amber' :
+              'text-terminal-red'
+            }`}>{ind.confluence.strength}</span>
+            <span>{ind.confluence.sell_count} bearish</span>
+          </div>
+        </MiniCard>
+      )}
+
+      {/* Volume trend */}
+      {ind.volume_trend && ind.volume_trend !== 'NEUTRAL' && (
+        <MiniCard label="Volume Activity">
+          <div className="flex items-center gap-2">
+            <span className={`text-xl ${ind.volume_trend === 'HIGH' ? 'text-terminal-green' : 'text-terminal-dim'}`}>
+              {ind.volume_trend === 'HIGH' ? '▲' : '▽'}
+            </span>
+            <div>
+              <span className={`text-sm font-mono font-bold ${
+                ind.volume_trend === 'HIGH' ? 'text-terminal-green' : 'text-terminal-dim'
+              }`}>
+                {ind.volume_trend === 'HIGH' ? 'Above Average' : 'Below Average'}
+              </span>
+              <div className="text-[10px] font-mono text-terminal-dim mt-0.5">
+                {ind.volume_trend === 'HIGH' ? 'Volume confirms move' : 'Low conviction'}
+              </div>
+            </div>
+          </div>
+        </MiniCard>
+      )}
     </div>
   )
 }

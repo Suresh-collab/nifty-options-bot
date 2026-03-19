@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createChart } from 'lightweight-charts'
 import { useStore } from '../store'
 import { fetchOHLCV } from '../lib/yahooFetch'
+import { computeChartSignals } from '../lib/chartIndicators'
 
 const INTERVALS = [
   { label: '5m', value: '5m' },
@@ -13,6 +14,8 @@ export default function LiveChart() {
   const chartInstance = useRef(null)
   const candleSeriesRef = useRef(null)
   const volumeSeriesRef = useRef(null)
+  const stLineSeriesRef = useRef(null)
+  const srLinesRef = useRef([])
   const lastDataRef = useRef([])
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
@@ -21,6 +24,8 @@ export default function LiveChart() {
   const [error, setError] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
   const [priceChange, setPriceChange] = useState(0)
+  const [showSignals, setShowSignals] = useState(true)
+  const [signalStats, setSignalStats] = useState(null)
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -50,7 +55,7 @@ export default function LiveChart() {
         secondsVisible: false,
       },
       width: chartRef.current.clientWidth,
-      height: 400,
+      height: 420,
     })
 
     const candleSeries = chart.addCandlestickSeries({
@@ -72,9 +77,18 @@ export default function LiveChart() {
       scaleMargins: { top: 0.85, bottom: 0 },
     })
 
+    // SuperTrend overlay line
+    const stLineSeries = chart.addLineSeries({
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    })
+
     chartInstance.current = chart
     candleSeriesRef.current = candleSeries
     volumeSeriesRef.current = volumeSeries
+    stLineSeriesRef.current = stLineSeries
 
     const handleResize = () => {
       if (chartRef.current) {
@@ -89,8 +103,64 @@ export default function LiveChart() {
       chartInstance.current = null
       candleSeriesRef.current = null
       volumeSeriesRef.current = null
+      stLineSeriesRef.current = null
+      srLinesRef.current = []
     }
   }, [])
+
+  const applySignals = useCallback((data) => {
+    if (!showSignals || !candleSeriesRef.current || !chartInstance.current) return
+
+    try {
+      const { markers, levels, tpSlBoxes, trendLine } = computeChartSignals(data)
+
+      // Apply buy/sell markers
+      candleSeriesRef.current.setMarkers(markers)
+
+      // Apply SuperTrend line with color segments
+      if (stLineSeriesRef.current && trendLine.length > 0) {
+        // lightweight-charts line series needs color per-point via markers approach
+        // Use setData with color property
+        stLineSeriesRef.current.setData(
+          trendLine.map(p => ({ time: p.time, value: p.value, color: p.color }))
+        )
+      }
+
+      // Remove old S/R lines
+      for (const line of srLinesRef.current) {
+        try { candleSeriesRef.current.removePriceLine(line) } catch {}
+      }
+      srLinesRef.current = []
+
+      // Draw support/resistance levels
+      for (const level of levels) {
+        const priceLine = candleSeriesRef.current.createPriceLine({
+          price: level.price,
+          color: level.type === 'support' ? '#22c55e50' : '#ef444450',
+          lineWidth: 1,
+          lineStyle: 2, // dashed
+          axisLabelVisible: true,
+          title: `${level.type === 'support' ? 'S' : 'R'} ${level.price.toFixed(0)}`,
+        })
+        srLinesRef.current.push(priceLine)
+      }
+
+      // Update signal stats
+      const buyCount = markers.filter(m => m.text.includes('BUY')).length
+      const sellCount = markers.filter(m => m.text.includes('SELL')).length
+      const strongCount = markers.filter(m => m.text.includes('STRONG')).length
+      setSignalStats({
+        total: markers.length,
+        buys: buyCount,
+        sells: sellCount,
+        strong: strongCount,
+        levels: levels.length,
+        lastSignal: markers.length > 0 ? markers[markers.length - 1] : null,
+      })
+    } catch (e) {
+      console.warn('Signal computation error:', e)
+    }
+  }, [showSignals])
 
   const fetchChart = useCallback(async (fullLoad = false) => {
     if (fullLoad) setLoading(true)
@@ -125,6 +195,10 @@ export default function LiveChart() {
             color: d.close >= d.open ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)',
           }))
         )
+
+        // Apply signals on full load
+        applySignals(data)
+
         if (isFirstLoad.current) {
           chartInstance.current?.timeScale().fitContent()
           isFirstLoad.current = false
@@ -144,6 +218,8 @@ export default function LiveChart() {
             })
           }
         }
+        // Re-apply signals on incremental updates too (every 10s)
+        applySignals(data)
       }
 
       lastDataRef.current = data
@@ -159,7 +235,7 @@ export default function LiveChart() {
     } finally {
       setLoading(false)
     }
-  }, [ticker, interval])
+  }, [ticker, interval, applySignals])
 
   useEffect(() => {
     // Reset on ticker/interval change
@@ -172,11 +248,30 @@ export default function LiveChart() {
     return () => window.clearInterval(iv)
   }, [ticker, interval, fetchChart])
 
+  // Re-apply signals when toggle changes
+  useEffect(() => {
+    if (lastDataRef.current.length > 0) {
+      if (showSignals) {
+        applySignals(lastDataRef.current)
+      } else {
+        // Clear all overlays
+        candleSeriesRef.current?.setMarkers([])
+        stLineSeriesRef.current?.setData([])
+        for (const line of srLinesRef.current) {
+          try { candleSeriesRef.current?.removePriceLine(line) } catch {}
+        }
+        srLinesRef.current = []
+        setSignalStats(null)
+      }
+    }
+  }, [showSignals, applySignals])
+
   const changeColor = priceChange >= 0 ? 'text-terminal-green' : 'text-terminal-red'
   const changeSign = priceChange >= 0 ? '+' : ''
 
   return (
     <div className="bg-terminal-surface border border-terminal-border rounded-lg overflow-hidden">
+      {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border">
         <div className="flex items-center gap-3">
           <span className="font-mono text-sm font-bold text-terminal-text">{ticker}</span>
@@ -195,9 +290,23 @@ export default function LiveChart() {
             <span className="relative inline-flex rounded-full h-2 w-2 bg-terminal-green"></span>
           </span>
           <span className="text-xs font-mono text-terminal-dim">LIVE</span>
+          <span className="text-xs font-mono text-terminal-blue">IST</span>
           {loading && <span className="text-xs font-mono text-terminal-amber animate-pulse">Loading...</span>}
         </div>
-        <div className="flex gap-1">
+        <div className="flex items-center gap-2">
+          {/* Signal toggle */}
+          <button
+            onClick={() => setShowSignals(!showSignals)}
+            className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
+              showSignals
+                ? 'bg-terminal-green/20 text-terminal-green border border-terminal-green/30'
+                : 'text-terminal-dim hover:text-terminal-text hover:bg-terminal-border border border-transparent'
+            }`}
+            title="Toggle buy/sell signals, SuperTrend, and S/R levels"
+          >
+            {showSignals ? 'Signals ON' : 'Signals OFF'}
+          </button>
+          {/* Interval buttons */}
           {INTERVALS.map(i => (
             <button
               key={i.value}
@@ -213,12 +322,47 @@ export default function LiveChart() {
           ))}
         </div>
       </div>
+
+      {/* Signal stats bar */}
+      {showSignals && signalStats && (
+        <div className="px-4 py-1.5 border-b border-terminal-border/50 flex items-center gap-4 text-[10px] font-mono">
+          <span className="text-terminal-dim">SIGNALS:</span>
+          <span className="text-terminal-green">{signalStats.buys} BUY</span>
+          <span className="text-terminal-red">{signalStats.sells} SELL</span>
+          {signalStats.strong > 0 && (
+            <span className="text-terminal-amber">{signalStats.strong} STRONG</span>
+          )}
+          <span className="text-terminal-dim">|</span>
+          <span className="text-terminal-dim">S/R: {signalStats.levels} levels</span>
+          {signalStats.lastSignal && (
+            <>
+              <span className="text-terminal-dim">|</span>
+              <span className={signalStats.lastSignal.text.includes('BUY') ? 'text-terminal-green' : 'text-terminal-red'}>
+                Last: {signalStats.lastSignal.text}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="px-4 py-2 text-xs font-mono text-terminal-red">
           Chart error: {error}
         </div>
       )}
       <div ref={chartRef} />
+
+      {/* Legend */}
+      {showSignals && (
+        <div className="px-4 py-1.5 border-t border-terminal-border/50 flex items-center gap-4 text-[10px] font-mono text-terminal-dim">
+          <span><span className="inline-block w-3 h-0.5 bg-terminal-green mr-1" />SuperTrend Up</span>
+          <span><span className="inline-block w-3 h-0.5 bg-terminal-red mr-1" />SuperTrend Down</span>
+          <span><span className="text-terminal-green mr-1">▲</span>Buy Signal</span>
+          <span><span className="text-terminal-red mr-1">▼</span>Sell Signal</span>
+          <span><span className="inline-block w-3 h-0.5 bg-terminal-green/30 mr-1 border-t border-dashed border-terminal-green/50" />Support</span>
+          <span><span className="inline-block w-3 h-0.5 bg-terminal-red/30 mr-1 border-t border-dashed border-terminal-red/50" />Resistance</span>
+        </div>
+      )}
     </div>
   )
 }

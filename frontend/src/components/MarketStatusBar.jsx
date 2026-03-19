@@ -37,7 +37,7 @@ export default function MarketStatusBar() {
 
         <div className="text-terminal-dim">
           {lastUpdated && (
-            <span>Updated: {lastUpdated.toLocaleTimeString('en-IN')}</span>
+            <span>Updated: {lastUpdated.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
           )}
         </div>
       </div>

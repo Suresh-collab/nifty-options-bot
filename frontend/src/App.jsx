@@ -8,6 +8,7 @@ import BudgetOptimizer from './components/BudgetOptimizer'
 import TradeConfirmModal from './components/TradeConfirmModal'
 import TradeHistory from './components/TradeHistory'
 import LiveChart from './components/LiveChart'
+import MarketNews from './components/MarketNews'
 
 export default function App() {
   const { fetchSignal, fetchMarketStatus, fetchTradeHistory } = useStore()
@@ -73,9 +74,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right col: budget optimizer */}
-          <div>
+          {/* Right col: budget optimizer + news */}
+          <div className="space-y-4">
             <BudgetOptimizer />
+            <MarketNews />
           </div>
         </div>
 
