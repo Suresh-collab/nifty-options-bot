@@ -57,11 +57,10 @@ async def get_chart(ticker: str, interval: str = "5m"):
         raise HTTPException(400, "ticker must be NIFTY or SENSEX")
     try:
         df = get_ohlcv(ticker, interval=interval)
-        IST_OFFSET = 19800  # +5:30 in seconds
         records = []
         for idx, row in df.iterrows():
             records.append({
-                "time": int(idx.timestamp()) + IST_OFFSET,
+                "time": int(idx.timestamp()),
                 "open": round(float(row["Open"]), 2),
                 "high": round(float(row["High"]), 2),
                 "low": round(float(row["Low"]), 2),

@@ -9,6 +9,14 @@ const INTERVALS = [
   { label: '15m', value: '15m' },
 ]
 
+// IST offset: +5:30 = 19800 seconds
+// Applied here (single point) so ALL data sources display IST on the chart
+const IST_OFFSET = 19800
+
+function toIST(data) {
+  return data.map(d => ({ ...d, time: d.time + IST_OFFSET }))
+}
+
 export default function LiveChart() {
   const chartRef = useRef(null)
   const chartInstance = useRef(null)
@@ -179,6 +187,9 @@ export default function LiveChart() {
       }
 
       if (!candleSeriesRef.current || data.length === 0) return
+
+      // Convert all timestamps to IST for display (single point of conversion)
+      data = toIST(data)
 
       const prev = lastDataRef.current
       const isNewData = prev.length === 0 || fullLoad

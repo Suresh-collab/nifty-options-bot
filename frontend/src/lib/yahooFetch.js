@@ -3,8 +3,6 @@ const SYMBOLS = {
   SENSEX: '^BSESN',
 }
 
-// IST offset: +5:30 = 19800 seconds
-const IST_OFFSET_SECONDS = 19800
 
 /**
  * Fetch OHLCV data from Yahoo Finance directly (client-side).
@@ -53,12 +51,8 @@ function parseYahooChart(json) {
     // Skip null entries
     if (open == null || close == null) continue
 
-    // Convert UTC timestamp to IST for lightweight-charts display
-    // lightweight-charts treats timestamps as UTC, so we add IST offset
-    const istTime = timestamps[i] + IST_OFFSET_SECONDS
-
     candles.push({
-      time: istTime,
+      time: timestamps[i],
       open: Math.round(open * 100) / 100,
       high: Math.round(high * 100) / 100,
       low: Math.round(low * 100) / 100,
