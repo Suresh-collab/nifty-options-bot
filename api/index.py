@@ -1,17 +1,21 @@
 import sys
 import os
-import importlib
+import importlib.util
 
-# Add the backend directory to the Python path so all backend imports resolve
-backend_dir = os.path.join(os.path.dirname(__file__), '..', 'backend')
+# Add the backend directory to the Python path for sub-imports (data, indicators, etc.)
+backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 sys.path.insert(0, backend_dir)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import the router from backend/api/routes.py
-# Use importlib to avoid conflict with this api/ directory
-routes_mod = importlib.import_module('api.routes')
+# Load backend/api/routes.py by file path to avoid conflict with this api/ directory
+spec = importlib.util.spec_from_file_location(
+    "backend_routes",
+    os.path.join(backend_dir, "api", "routes.py")
+)
+routes_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(routes_mod)
 router = routes_mod.router
 
 app = FastAPI(title="Nifty Options Bot", version="1.0.0")
@@ -25,6 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api")
+
 
 @app.get("/api/health")
 async def health():
