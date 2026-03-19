@@ -1,6 +1,7 @@
 import sys
 import os
 import importlib.util
+import traceback
 
 # Add the backend directory to the Python path for sub-imports (data, indicators, etc.)
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
@@ -19,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load backend/api/routes.py by file path to avoid conflict with this api/ directory
+# Load backend routes
 spec = importlib.util.spec_from_file_location(
     "backend_routes",
     os.path.join(backend_dir, "api", "routes.py")
@@ -32,3 +33,23 @@ app.include_router(routes_mod.router, prefix="/api")
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "env": "vercel"}
+
+
+@app.get("/api/debug-yfinance")
+async def debug_yfinance():
+    """Test if yfinance works on Vercel."""
+    try:
+        import yfinance as yf
+        ticker = yf.download("^NSEI", period="1d", interval="5m",
+                             progress=False, auto_adjust=True)
+        return {
+            "status": "ok",
+            "rows": len(ticker),
+            "columns": list(ticker.columns) if hasattr(ticker, 'columns') else [],
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
