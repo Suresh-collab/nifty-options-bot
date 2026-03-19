@@ -9,6 +9,14 @@
  *
  * Core principle: Only signal when MULTIPLE indicators agree (confluence).
  * This reduces false signals and avoids common indicator traps.
+ *
+ * IMPROVEMENT LOG (continuous improvement):
+ * v1: Basic confluence (3+ indicators agree)
+ * v2: Added trend strength filter — suppress counter-trend signals during
+ *     strong moves (>1.5% intraday drop = don't generate BUY signals).
+ *     Added panic/capitulation detection (large red candles + high volume).
+ *     Increased minimum candle spacing between signals from 3 to 5.
+ *     RSI oversold no longer counts as bullish during a crash.
  */
 
 // ─── EMA ────────────────────────────────────────────────────────────
@@ -113,24 +121,20 @@ function supportResistance(candles, lookback = 20) {
   const levels = []
   if (candles.length < lookback) return levels
 
-  // Use recent candles to find swing highs/lows
   const recent = candles.slice(-lookback * 3)
 
   for (let i = 2; i < recent.length - 2; i++) {
     const c = recent[i]
-    // Swing high
     if (c.high > recent[i - 1].high && c.high > recent[i - 2].high &&
         c.high > recent[i + 1].high && c.high > recent[i + 2].high) {
       levels.push({ price: c.high, type: 'resistance', time: c.time })
     }
-    // Swing low
     if (c.low < recent[i - 1].low && c.low < recent[i - 2].low &&
         c.low < recent[i + 1].low && c.low < recent[i + 2].low) {
       levels.push({ price: c.low, type: 'support', time: c.time })
     }
   }
 
-  // Cluster nearby levels (within 0.15% of each other)
   const clustered = []
   const used = new Set()
   for (let i = 0; i < levels.length; i++) {
@@ -149,12 +153,11 @@ function supportResistance(candles, lookback = 20) {
     clustered.push({ price: Math.round((sum / count) * 100) / 100, type, strength: count })
   }
 
-  // Return strongest levels
   clustered.sort((a, b) => b.strength - a.strength)
-  return clustered.slice(0, 6) // Top 6 levels
+  return clustered.slice(0, 6)
 }
 
-// ─── Volume Profile (simple: above/below average) ───────────────────
+// ─── Volume Profile ─────────────────────────────────────────────────
 function volumeAnalysis(candles, period = 20) {
   if (candles.length < period) return { aboveAvg: false, ratio: 1 }
   const recent = candles.slice(-period)
@@ -166,8 +169,63 @@ function volumeAnalysis(candles, period = 20) {
   }
 }
 
-// ─── CONFLUENCE SIGNAL ENGINE ───────────────────────────────────────
-// This is the core: only generate buy/sell when multiple indicators agree
+// ─── TREND STRENGTH DETECTOR (v2) ──────────────────────────────────
+// Measures how strong the current intraday trend is.
+// Used to suppress counter-trend signals during crashes/rallies.
+function trendStrength(candles, i, lookback = 20) {
+  if (i < lookback) return { change: 0, isCrash: false, isRally: false, isPanic: false }
+
+  const windowStart = Math.max(0, i - lookback)
+  const startPrice = candles[windowStart].close
+  const currentPrice = candles[i].close
+  const changePct = ((currentPrice - startPrice) / startPrice) * 100
+
+  // Count consecutive red/green candles
+  let consecutiveRed = 0
+  let consecutiveGreen = 0
+  for (let j = i; j > windowStart; j--) {
+    if (candles[j].close < candles[j].open) {
+      consecutiveRed++
+      consecutiveGreen = 0
+    } else {
+      consecutiveGreen++
+      break
+    }
+  }
+  for (let j = i; j > windowStart; j--) {
+    if (candles[j].close > candles[j].open) {
+      consecutiveGreen++
+      consecutiveRed = 0
+    } else {
+      break
+    }
+  }
+
+  // Detect panic: large red candles with high volume
+  const recentCandles = candles.slice(Math.max(0, i - 5), i + 1)
+  const avgRange = candles.slice(windowStart, i + 1)
+    .reduce((s, c) => s + (c.high - c.low), 0) / lookback
+  const isPanic = recentCandles.some(c => {
+    const bodySize = Math.abs(c.close - c.open)
+    const isLargeRed = c.close < c.open && bodySize > avgRange * 2
+    return isLargeRed
+  })
+
+  return {
+    change: changePct,
+    isCrash: changePct < -1.5,      // >1.5% drop = crash mode
+    isRally: changePct > 1.5,        // >1.5% rise = rally mode
+    isStrongDown: changePct < -0.8,   // noticeable downtrend
+    isStrongUp: changePct > 0.8,      // noticeable uptrend
+    isPanic,                           // capitulation candles detected
+    consecutiveRed,
+    consecutiveGreen,
+  }
+}
+
+// ─── CONFLUENCE SIGNAL ENGINE (v2) ──────────────────────────────────
+// Only generate buy/sell when multiple indicators agree AND
+// the signal aligns with the broader trend (no counter-trend traps).
 
 export function computeChartSignals(candles) {
   if (!candles || candles.length < 30) {
@@ -182,6 +240,7 @@ export function computeChartSignals(candles) {
 
   const markers = []
   const tpSlBoxes = []
+  let lastMarkerIdx = -10
 
   // EMA 20 and 50 for trend confirmation
   const ema20 = ema(closes, 20)
@@ -192,17 +251,27 @@ export function computeChartSignals(candles) {
     let bullSignals = 0
     let bearSignals = 0
 
-    // 1. SuperTrend direction change
+    // ── Trend context (v2) ──────────────────────────────────────
+    const trend = trendStrength(candles, i, 30)
+
+    // 1. SuperTrend direction change (strongest single signal)
     if (stData.direction[i] === 1 && stData.direction[i - 1] === -1) bullSignals += 2
     if (stData.direction[i] === -1 && stData.direction[i - 1] === 1) bearSignals += 2
 
-    // 2. RSI condition
+    // 2. RSI condition — BUT NOT during crashes/rallies (v2 fix)
     if (rsiValues[i] !== null) {
-      if (rsiValues[i] < 35) bullSignals += 1
-      else if (rsiValues[i] > 65) bearSignals += 1
-      // RSI reversal from oversold/overbought
-      if (rsiValues[i] > 30 && rsiValues[i - 1] !== null && rsiValues[i - 1] < 30) bullSignals += 1
-      if (rsiValues[i] < 70 && rsiValues[i - 1] !== null && rsiValues[i - 1] > 70) bearSignals += 1
+      // v2: RSI oversold does NOT count as bullish during a crash
+      // (prevents "catching falling knife" false BUY signals)
+      if (rsiValues[i] < 35 && !trend.isStrongDown) bullSignals += 1
+      if (rsiValues[i] > 65 && !trend.isStrongUp) bearSignals += 1
+
+      // RSI reversal — only valid if trend supports it
+      if (rsiValues[i] > 30 && rsiValues[i - 1] !== null && rsiValues[i - 1] < 30 && !trend.isStrongDown) {
+        bullSignals += 1
+      }
+      if (rsiValues[i] < 70 && rsiValues[i - 1] !== null && rsiValues[i - 1] > 70 && !trend.isStrongUp) {
+        bearSignals += 1
+      }
     }
 
     // 3. MACD crossover
@@ -220,22 +289,41 @@ export function computeChartSignals(candles) {
     // 5. Volume confirmation
     const vol = volumeAnalysis(candles.slice(0, i + 1), 20)
     if (vol.aboveAvg) {
-      // Volume confirms the direction
       if (candles[i].close > candles[i].open) bullSignals += 0.5
       else bearSignals += 0.5
     }
 
-    // CONFLUENCE CHECK: Only signal if score >= 3 (strong agreement)
-    const isBuy = bullSignals >= 3 && bearSignals < 1.5
-    const isSell = bearSignals >= 3 && bullSignals < 1.5
+    // 6. (v2) Trend momentum bonus — reward signals that align with trend
+    if (trend.isStrongDown) bearSignals += 1    // downtrend boosts sell signals
+    if (trend.isStrongUp) bullSignals += 1      // uptrend boosts buy signals
+    if (trend.isCrash) bearSignals += 1.5       // crash mode: strong sell bias
+    if (trend.isRally) bullSignals += 1.5       // rally mode: strong buy bias
+
+    // 7. (v2) Panic detection — high-volume large red candles
+    if (trend.isPanic) {
+      bearSignals += 1
+      bullSignals -= 1  // actively suppress counter-trend buys
+    }
+
+    // ── CONFLUENCE CHECK ────────────────────────────────────────
+    // v2: Raised threshold and added trend alignment requirement
+    let isBuy = bullSignals >= 3 && bearSignals < 1.5
+    let isSell = bearSignals >= 3 && bullSignals < 1.5
+
+    // v2: BLOCK counter-trend signals during extreme moves
+    if (trend.isCrash && isBuy) isBuy = false   // Never BUY during a crash
+    if (trend.isRally && isSell) isSell = false  // Never SELL during a rally
+
+    // v2: During panic, only allow SELL signals
+    if (trend.isPanic && isBuy) isBuy = false
 
     if (isBuy || isSell) {
-      // Avoid consecutive signals too close together (min 3 candles apart)
-      const lastMarker = markers[markers.length - 1]
-      if (lastMarker && i - candles.indexOf(candles.find(c => c.time === lastMarker.time)) < 3) continue
+      // v2: Increased minimum spacing from 3 to 5 candles (reduce noise)
+      if (i - lastMarkerIdx < 5) continue
+      lastMarkerIdx = i
 
       const confidence = isBuy ? bullSignals : bearSignals
-      const isStrong = confidence >= 4
+      const isStrong = confidence >= 4.5  // v2: raised from 4 to 4.5
 
       markers.push({
         time: candles[i].time,
