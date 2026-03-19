@@ -233,7 +233,7 @@ function trendStrength(candles, i, lookback = 20) {
 
 export function computeChartSignals(candles, interval = '5m') {
   if (!candles || candles.length < 30) {
-    return { markers: [], levels: [], tpSlBoxes: [], trendLine: [], rsiValues: [], pivots: [] }
+    return { markers: [], levels: [], tpSlBoxes: [], trendLine: [], rsiValues: [], pivots: [], ema20Line: [], ema50Line: [], macdChartData: [] }
   }
 
   // Interval-aware settings to control signal density
@@ -340,15 +340,16 @@ export function computeChartSignals(candles, interval = '5m') {
       const confidence = isBuy ? bullSignals : bearSignals
       const isStrong = confidence >= cfg.strongThreshold
 
+      // TradingView-style: large colored labels, always size 2 for visibility
       markers.push({
         time: candles[i].time,
         position: isBuy ? 'belowBar' : 'aboveBar',
         color: isBuy ? '#22c55e' : '#ef4444',
         shape: isBuy ? 'arrowUp' : 'arrowDown',
         text: isBuy
-          ? (isStrong ? 'STRONG BUY' : 'BUY')
-          : (isStrong ? 'STRONG SELL' : 'SELL'),
-        size: isStrong ? 2 : 1,
+          ? (isStrong ? '⬆ STRONG BUY' : '▲ Buy')
+          : (isStrong ? '⬇ STRONG SELL' : '▼ Sell'),
+        size: 2,  // Always large for visibility (TradingView style)
       })
 
       // Generate TP/SL box for this signal
@@ -388,7 +389,22 @@ export function computeChartSignals(candles, interval = '5m') {
   // ─── Pivot Points (Classic Floor Pivots from previous day) ────────
   const pivots = computePivots(candles)
 
-  return { markers, levels: srLevels, tpSlBoxes, trendLine, rsiValues, pivots }
+  // ─── EMA lines for chart overlay ────────────────────────────────
+  const ema20Line = candles.map((c, i) => i >= 20 ? { time: c.time, value: Math.round(ema20[i] * 100) / 100 } : null).filter(Boolean)
+  const ema50Line = candles.map((c, i) => i >= 50 ? { time: c.time, value: Math.round(ema50[i] * 100) / 100 } : null).filter(Boolean)
+
+  // ─── MACD data for sub-chart ────────────────────────────────────
+  const macdChartData = candles.map((c, i) => {
+    if (i < 26) return null
+    return {
+      time: c.time,
+      macd: Math.round(macdData.macdLine[i] * 100) / 100,
+      signal: Math.round(macdData.signalLine[i] * 100) / 100,
+      histogram: Math.round(macdData.histogram[i] * 100) / 100,
+    }
+  }).filter(Boolean)
+
+  return { markers, levels: srLevels, tpSlBoxes, trendLine, rsiValues, pivots, ema20Line, ema50Line, macdChartData }
 }
 
 // ─── PIVOT POINT CALCULATOR ────────────────────────────────────────
