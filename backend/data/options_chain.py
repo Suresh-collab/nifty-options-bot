@@ -86,15 +86,21 @@ def _fallback_chain(ticker: str, spot: float = 0) -> dict:
     }
 
 
-def fetch_option_chain(ticker: str) -> dict:
+def fetch_option_chain(ticker: str, spot: float = 0) -> dict:
     """
     Fetch raw option chain data from NSE.
     Returns parsed chain with strikes, OI, IV, LTP for CE and PE.
-    Falls back to defaults if NSE is unreachable (non-Indian IP).
+    Falls back to synthetic chain if NSE is unreachable (non-Indian IP).
+    When spot price is provided, the fallback generates realistic strikes around it.
     """
     cache_key = f"chain_{ticker}"
     cached = _cache_get(cache_key)
     if cached is not None:
+        # If cached entry had no strikes but we now have spot, regenerate
+        if not cached.get("strikes") and spot > 0:
+            result = _fallback_chain(ticker, spot)
+            _cache_set(cache_key, result)
+            return result
         return cached
 
     url = NSE_OPTION_CHAIN_URLS.get(ticker.upper())
@@ -110,7 +116,7 @@ def fetch_option_chain(ticker: str) -> dict:
             resp.raise_for_status()
             raw = resp.json()
     except Exception:
-        result = _fallback_chain(ticker)
+        result = _fallback_chain(ticker, spot)
         _cache_set(cache_key, result)
         return result
 
@@ -118,6 +124,12 @@ def fetch_option_chain(ticker: str) -> dict:
     data = records.get("data", [])
     expiry_dates = records.get("expiryDates", [])
     spot_price = records.get("underlyingValue", 0)
+
+    # NSE returns empty {} for non-Indian IPs — fall back to synthetic chain
+    if not data:
+        result = _fallback_chain(ticker, spot or spot_price)
+        _cache_set(cache_key, result)
+        return result
 
     # Parse first expiry only (nearest weekly)
     nearest_expiry = expiry_dates[0] if expiry_dates else None

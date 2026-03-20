@@ -1,7 +1,11 @@
 from typing import List
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
+import httpx
+import xml.etree.ElementTree as ET
+from datetime import datetime
 from data.market_data import get_ohlcv, get_spot_price, get_market_status
 from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv, _fallback_chain
 from indicators.engine import compute_indicators
@@ -49,6 +53,26 @@ class PaperTradeExitRequest(BaseModel):
     exit_price: float
 
 
+# --- Yahoo Finance proxy (avoids CORS for client-side chart fallback) ---
+_YF_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
+
+@router.get("/yf-proxy")
+async def yf_proxy(symbol: str, interval: str = "5m", range: str = "5d"):
+    """Proxy Yahoo Finance API requests to avoid CORS issues."""
+    allowed_intervals = {"1m", "2m", "5m", "15m", "1d"}
+    if interval not in allowed_intervals:
+        raise HTTPException(400, f"interval must be one of {allowed_intervals}")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={range}"
+    try:
+        async with httpx.AsyncClient(headers=_YF_HEADERS, timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url)
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        raise HTTPException(502, f"Yahoo Finance proxy failed: {str(e)}")
+
+
 # --- Chart data ---
 @router.get("/chart/{ticker}")
 async def get_chart(ticker: str, interval: str = "5m"):
@@ -87,7 +111,9 @@ async def get_signal(ticker: str):
     try:
         df      = get_ohlcv(ticker, interval="5m")
         spot    = get_spot_price(ticker)
-        chain   = fetch_option_chain(ticker)
+        chain   = fetch_option_chain(ticker, spot=spot)
+        if chain.get("fallback") and not chain.get("strikes") and spot > 0:
+            chain = _fallback_chain(ticker, spot)
         iv      = get_atm_iv(chain)
         indic   = compute_indicators(df, pcr=chain["pcr"], iv=iv)
         expiry  = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
@@ -116,7 +142,10 @@ async def optimize_budget(req: OptimizeRequest):
     try:
         df     = get_ohlcv(ticker, interval="5m")
         spot   = get_spot_price(ticker)
-        chain  = fetch_option_chain(ticker)
+        chain  = fetch_option_chain(ticker, spot=spot)
+        # If NSE was unreachable and strikes are empty, regenerate with spot price
+        if chain.get("fallback") and not chain.get("strikes") and spot > 0:
+            chain = _fallback_chain(ticker, spot)
         iv     = get_atm_iv(chain)
         indic  = compute_indicators(df, pcr=chain["pcr"], iv=iv)
         expiry = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
@@ -214,3 +243,86 @@ async def paper_history():
 @router.get("/paper-trade/stats")
 async def paper_stats():
     return get_stats()
+
+
+# --- Market News (server-side RSS fetch — no CORS issues) ---
+_NEWS_FEEDS = [
+    {"name": "MoneyControl Markets", "url": "https://www.moneycontrol.com/rss/marketreports.xml"},
+    {"name": "ET Markets", "url": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"},
+    {"name": "MoneyControl News", "url": "https://www.moneycontrol.com/rss/latestnews.xml"},
+    {"name": "ET Stocks", "url": "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms"},
+    {"name": "LiveMint Markets", "url": "https://www.livemint.com/rss/markets"},
+]
+
+_NEWS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
+
+
+def _parse_rss_items(xml_text: str, source_name: str) -> list:
+    """Parse RSS XML and return news items."""
+    items = []
+    try:
+        root = ET.fromstring(xml_text)
+        # Handle both RSS 2.0 and Atom formats
+        for item in root.iter("item"):
+            title = item.findtext("title", "").strip()
+            link = item.findtext("link", "").strip()
+            desc = item.findtext("description", "").strip()
+            pub_date = item.findtext("pubDate", "")
+            if not title:
+                continue
+            # Strip HTML tags from title and description
+            import re
+            title = re.sub(r'<[^>]+>', '', title).strip()
+            desc = re.sub(r'<[^>]+>', '', desc)[:200].strip()
+            items.append({
+                "title": title,
+                "link": link,
+                "description": desc,
+                "pubDate": pub_date,
+                "source": source_name,
+            })
+            if len(items) >= 10:
+                break
+    except Exception:
+        pass
+    return items
+
+
+@router.get("/news")
+async def get_news():
+    """Fetch market news from RSS feeds server-side (bypasses CORS)."""
+    all_items = []
+    async with httpx.AsyncClient(headers=_NEWS_HEADERS, timeout=8, follow_redirects=True) as client:
+        for feed in _NEWS_FEEDS:
+            try:
+                resp = await client.get(feed["url"])
+                if resp.status_code == 200:
+                    items = _parse_rss_items(resp.text, feed["name"])
+                    all_items.extend(items)
+            except Exception:
+                continue
+
+    # Deduplicate by title prefix
+    seen = set()
+    unique = []
+    for item in all_items:
+        key = item["title"][:50].lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    # Sort by pubDate (newest first) — best effort parse
+    def parse_date(s):
+        try:
+            return datetime.strptime(s.strip(), "%a, %d %b %Y %H:%M:%S %z")
+        except Exception:
+            try:
+                return datetime.strptime(s.strip(), "%a, %d %b %Y %H:%M:%S GMT")
+            except Exception:
+                return datetime.min
+
+    unique.sort(key=lambda x: parse_date(x.get("pubDate", "")), reverse=True)
+    return unique[:25]

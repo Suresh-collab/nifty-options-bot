@@ -17,6 +17,27 @@ function toIST(data) {
   return data.map(d => ({ ...d, time: d.time + IST_OFFSET }))
 }
 
+/**
+ * Generate synthetic volume from candle activity when real volume is unavailable.
+ * Uses (high - low) range as a proxy for trading activity — common technique for indices.
+ */
+function synthesizeVolume(data) {
+  const hasRealVolume = data.some(d => (d.volume || 0) > 100)
+  if (hasRealVolume) return data
+
+  // Use candle range × body ratio as synthetic volume
+  const ranges = data.map(d => (d.high - d.low) || 0)
+  const avgRange = ranges.reduce((a, b) => a + b, 0) / (ranges.length || 1) || 1
+
+  return data.map(d => {
+    const range = (d.high - d.low) || 0
+    const bodyRatio = Math.abs(d.close - d.open) / (range || 1)
+    // Scale: range relative to average, boosted by body ratio (fuller candles = more volume)
+    const syntheticVol = Math.round((range / avgRange) * (0.5 + bodyRatio) * 1000000)
+    return { ...d, volume: syntheticVol, _synthetic: true }
+  })
+}
+
 /** Cap volume at 95th percentile to prevent outlier compression */
 function getVolumeCap(data) {
   const volumes = data.map(d => d.volume || 0).filter(v => v > 0)
@@ -122,7 +143,7 @@ export default function LiveChart() {
       },
       rightPriceScale: {
         borderColor: '#1e293b',
-        scaleMargins: { top: 0.05, bottom: 0.28 },
+        scaleMargins: { top: 0.05, bottom: 0.22 },
       },
       timeScale: {
         borderColor: '#1e293b',
@@ -148,9 +169,10 @@ export default function LiveChart() {
       priceFormat: { type: 'volume' },
       priceScaleId: 'vol',
       color: '#26a69a',
+      base: 0,
     })
     chart.priceScale('vol').applyOptions({
-      scaleMargins: { top: 0.65, bottom: 0 },
+      scaleMargins: { top: 0.7, bottom: 0 },
       visible: false,
       drawTicks: false,
     })
@@ -494,6 +516,7 @@ export default function LiveChart() {
       if (!candleSeriesRef.current || data.length === 0) return
 
       data = toIST(data)
+      data = synthesizeVolume(data)
 
       const prev = lastDataRef.current
       const isNewData = prev.length === 0 || fullLoad

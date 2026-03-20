@@ -12,10 +12,10 @@ export async function fetchOHLCV(ticker, interval = '5m') {
   const symbol = SYMBOLS[ticker.toUpperCase()] || ticker
   const range = interval === '1m' ? '1d' : ['2m', '5m'].includes(interval) ? '5d' : '60d'
 
-  // Try direct Yahoo Finance API first, fall back to proxy
+  // Try backend proxy first (avoids CORS), then direct Yahoo Finance
   const urls = [
+    `/api/yf-proxy?symbol=${encodeURIComponent(symbol)}&interval=${interval}&range=${range}`,
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`,
-    `/yf-proxy/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`,
   ]
 
   let lastError = null
@@ -23,7 +23,10 @@ export async function fetchOHLCV(ticker, interval = '5m') {
     try {
       const res = await fetch(url)
       if (!res.ok) continue
-      const json = await res.json()
+      const text = await res.text()
+      // Guard against HTML responses (CORS errors, 404 pages)
+      if (text.startsWith('<')) continue
+      const json = JSON.parse(text)
       return parseYahooChart(json)
     } catch (e) {
       lastError = e

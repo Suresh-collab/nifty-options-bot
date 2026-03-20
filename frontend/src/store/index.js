@@ -57,16 +57,22 @@ export const useStore = create((set, get) => ({
     set({ optimizeLoading: true, optimizeError: null })
     try {
       // Try server-side first
-      let res = await fetch('/api/optimize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticker, budget: Number(budget) }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        set({ optimizeData: data, optimizeLoading: false })
-        return
-      }
+      let res
+      try {
+        res = await fetch('/api/optimize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker, budget: Number(budget) }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          // Check if we got a valid result (not AVOID due to missing chain data)
+          if (data?.plan?.recommendation !== 'AVOID' || data?.plan?.reason !== 'No option chain data.') {
+            set({ optimizeData: data, optimizeLoading: false })
+            return
+          }
+        }
+      } catch {}
 
       // Fall back to client-side OHLCV + server compute
       let ohlcv = get()._cachedOHLCV

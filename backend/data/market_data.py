@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import httpx
 from datetime import datetime, time as dtime
 import time
 
@@ -15,6 +16,10 @@ TICKERS = {
 LOT_SIZES = {
     "NIFTY":  25,
     "SENSEX": 20,
+}
+
+_YF_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
 def _cache_get(key):
@@ -35,11 +40,51 @@ def is_market_open() -> bool:
     market_close = dtime(15, 30)
     return market_open <= now.time() <= market_close
 
+
+def _fetch_yahoo_direct(symbol: str, interval: str) -> pd.DataFrame:
+    """Direct Yahoo Finance API fetch — fallback when yfinance library is blocked."""
+    range_map = {"1m": "1d", "2m": "5d", "5m": "5d", "15m": "60d"}
+    yf_range = range_map.get(interval, "5d")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={yf_range}"
+
+    resp = httpx.get(url, headers=_YF_HEADERS, timeout=10, follow_redirects=True)
+    resp.raise_for_status()
+    data = resp.json()
+
+    result = data.get("chart", {}).get("result", [])
+    if not result:
+        raise ValueError("No chart data in Yahoo response")
+
+    r = result[0]
+    timestamps = r.get("timestamp", [])
+    quote = r.get("indicators", {}).get("quote", [{}])[0]
+
+    rows = []
+    for i in range(len(timestamps)):
+        o = quote.get("open", [None])[i] if i < len(quote.get("open", [])) else None
+        h = quote.get("high", [None])[i] if i < len(quote.get("high", [])) else None
+        lo = quote.get("low", [None])[i] if i < len(quote.get("low", [])) else None
+        c = quote.get("close", [None])[i] if i < len(quote.get("close", [])) else None
+        v = quote.get("volume", [0])[i] if i < len(quote.get("volume", [])) else 0
+        if o is None or c is None:
+            continue
+        rows.append({
+            "Open": round(o, 2), "High": round(h, 2), "Low": round(lo, 2),
+            "Close": round(c, 2), "Volume": v or 0,
+            "_ts": timestamps[i],
+        })
+
+    df = pd.DataFrame(rows)
+    df.index = pd.to_datetime(df["_ts"], unit="s")
+    df = df.drop(columns=["_ts"])
+    df.index.name = "Datetime"
+    return df
+
+
 def get_ohlcv(ticker: str, interval: str = "5m") -> pd.DataFrame:
     """
     Fetch OHLCV data for NIFTY or SENSEX.
-    ticker: 'NIFTY' or 'SENSEX'
-    interval: '5m' or '15m'
+    Tries yfinance first, falls back to direct Yahoo Finance API.
     """
     cache_key = f"ohlcv_{ticker}_{interval}"
     cached = _cache_get(cache_key)
@@ -48,14 +93,27 @@ def get_ohlcv(ticker: str, interval: str = "5m") -> pd.DataFrame:
 
     symbol = TICKERS.get(ticker.upper(), ticker)
     period = "5d" if interval in ("1m", "2m", "5m") else "60d"
-    df = yf.download(symbol, period=period, interval=interval,
-                     progress=False, auto_adjust=True)
+
+    # Try yfinance library first
+    df = None
+    try:
+        df = yf.download(symbol, period=period, interval=interval,
+                         progress=False, auto_adjust=True)
+        if df.empty:
+            df = None
+        else:
+            # yfinance >= 1.0 returns MultiIndex columns (Price, Ticker)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+    except Exception:
+        df = None
+
+    # Fallback: direct Yahoo Finance HTTP API
+    if df is None or df.empty:
+        df = _fetch_yahoo_direct(symbol, interval)
+
     if df.empty:
         raise ValueError(f"No data returned for {ticker}")
-
-    # yfinance >= 1.0 returns MultiIndex columns (Price, Ticker) — flatten them
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
 
     df.index = pd.to_datetime(df.index)
     df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()

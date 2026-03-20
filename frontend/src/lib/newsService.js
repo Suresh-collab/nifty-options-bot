@@ -117,15 +117,18 @@ function parseRSSItems(xmlText, sourceName) {
 const CORS_PROXIES = [
   (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
 ]
 
 async function fetchRSSFeed(feed) {
   for (const proxy of CORS_PROXIES) {
     try {
-      const res = await fetch(proxy(feed.url), { signal: AbortSignal.timeout(8000) })
+      const res = await fetch(proxy(feed.url), { signal: AbortSignal.timeout(6000) })
       if (!res.ok) continue
       const text = await res.text()
-      return parseRSSItems(text, feed.name)
+      const items = parseRSSItems(text, feed.name)
+      if (items.length > 0) return items
     } catch {
       continue
     }
@@ -134,10 +137,42 @@ async function fetchRSSFeed(feed) {
 }
 
 /**
+ * Try fetching news from our backend API first (no CORS issues).
+ * Falls back to client-side RSS fetching via CORS proxies.
+ */
+async function fetchNewsFromBackend() {
+  try {
+    const res = await fetch('/api/news', { signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return null
+    const items = await res.json()
+    if (!Array.isArray(items) || items.length === 0) return null
+    // Backend items need sentiment + factor analysis applied client-side
+    return items.map(item => ({
+      title: item.title || '',
+      link: item.link || '',
+      description: item.description || '',
+      pubDate: item.pubDate ? new Date(item.pubDate) : new Date(),
+      source: item.source || 'Unknown',
+      sentiment: analyzeSentiment(item.title, item.description),
+      factors: detectFactors(item.title, item.description),
+    }))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Fetch all market news from configured RSS feeds.
  * Returns sorted, deduplicated news items with sentiment and factor tags.
  */
 export async function fetchMarketNews() {
+  // Strategy 1: Try backend API (server-side fetch, no CORS)
+  const backendNews = await fetchNewsFromBackend()
+  if (backendNews && backendNews.length > 0) {
+    return backendNews.slice(0, 25)
+  }
+
+  // Strategy 2: Client-side RSS via CORS proxies
   const results = await Promise.allSettled(
     RSS_FEEDS.map(feed => fetchRSSFeed(feed))
   )
@@ -158,7 +193,7 @@ export async function fetchMarketNews() {
   // Sort by date (newest first)
   unique.sort((a, b) => b.pubDate - a.pubDate)
 
-  return unique.slice(0, 20) // Top 20 items
+  return unique.slice(0, 25)
 }
 
 /**
