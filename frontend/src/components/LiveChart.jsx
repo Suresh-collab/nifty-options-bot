@@ -67,6 +67,7 @@ export default function LiveChart() {
   const macdHistRef = useRef(null)
   const srLinesRef = useRef([])
   const pivotLinesRef = useRef([])
+  const tradeLinesRef = useRef([])  // v4: active trade SL/target/entry lines
   const lastDataRef = useRef([])
   const volCapRef = useRef(1)
   const isFirstLoad = useRef(true)
@@ -83,6 +84,9 @@ export default function LiveChart() {
   const [showPivots, setShowPivots] = useState(false)
   const [showEMA, setShowEMA] = useState(false)
   const [signalStats, setSignalStats] = useState(null)
+  const [tradeStats, setTradeStats] = useState(null)  // v4: trade performance stats
+  const [activeTradeInfo, setActiveTradeInfo] = useState(null)  // v4: current open trade
+  const [haTrend, setHaTrend] = useState(null)  // v5: HA trend status
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [crosshairData, setCrosshairData] = useState(null)
 
@@ -263,6 +267,7 @@ export default function LiveChart() {
       ema50SeriesRef.current = null
       srLinesRef.current = []
       pivotLinesRef.current = []
+      tradeLinesRef.current = []
     }
   }, [])
 
@@ -406,7 +411,7 @@ export default function LiveChart() {
     if (!candleSeriesRef.current || !chartInstance.current) return
 
     try {
-      const { markers, levels, trendLine, pivots, ema20Line, ema50Line } = computeChartSignals(data, interval)
+      const { markers, levels, trendLine, pivots, ema20Line, ema50Line, activeTradeZone, tradeStats: ts, tradeHistory, haTrendStatus: haStatus } = computeChartSignals(data, interval)
 
       // Signals (markers + trend line)
       if (showSignals) {
@@ -471,6 +476,55 @@ export default function LiveChart() {
         }
       }
 
+      // v4: Remove old trade zone lines
+      for (const line of tradeLinesRef.current) {
+        try { candleSeriesRef.current.removePriceLine(line) } catch {}
+      }
+      tradeLinesRef.current = []
+
+      // v4: Draw active trade zone lines (SL, Target, Entry)
+      if (showSignals && activeTradeZone) {
+        const entryLine = candleSeriesRef.current.createPriceLine({
+          price: activeTradeZone.entryPrice,
+          color: '#3b82f6',  // blue for entry
+          lineWidth: 2,
+          lineStyle: 0,  // solid
+          axisLabelVisible: true,
+          title: `ENTRY ${activeTradeZone.direction === 'long' ? '▲' : '▼'} ${activeTradeZone.entryPrice.toFixed(2)}`,
+        })
+        tradeLinesRef.current.push(entryLine)
+
+        const slLine = candleSeriesRef.current.createPriceLine({
+          price: activeTradeZone.currentSL,
+          color: '#f97316',  // orange for SL
+          lineWidth: 2,
+          lineStyle: 2,  // dashed
+          axisLabelVisible: true,
+          title: `STOP LOSS ${activeTradeZone.currentSL.toFixed(2)}`,
+        })
+        tradeLinesRef.current.push(slLine)
+
+        const tpLine = candleSeriesRef.current.createPriceLine({
+          price: activeTradeZone.currentTarget,
+          color: '#22d3ee',  // cyan for target
+          lineWidth: 2,
+          lineStyle: 2,  // dashed
+          axisLabelVisible: true,
+          title: `TARGET ${activeTradeZone.currentTarget.toFixed(2)}`,
+        })
+        tradeLinesRef.current.push(tpLine)
+
+        setActiveTradeInfo({
+          direction: activeTradeZone.direction,
+          entry: activeTradeZone.entryPrice,
+          sl: activeTradeZone.currentSL,
+          target: activeTradeZone.currentTarget,
+          currentPrice: data[data.length - 1]?.close,
+        })
+      } else {
+        setActiveTradeInfo(null)
+      }
+
       // Volume visibility
       if (volumeSeriesRef.current) {
         volumeSeriesRef.current.applyOptions({ visible: showVolume })
@@ -479,10 +533,10 @@ export default function LiveChart() {
       // Sub-charts
       applySubCharts(data)
 
-      // Signal stats
+      // Signal stats + v4 trade stats
       if (showSignals) {
-        const buyCount = markers.filter(m => m.text.includes('Buy')).length
-        const sellCount = markers.filter(m => m.text.includes('Sell')).length
+        const buyCount = markers.filter(m => m.text.includes('BUY')).length
+        const sellCount = markers.filter(m => m.text.includes('SELL')).length
         const strongCount = markers.filter(m => m.text.includes('STRONG')).length
         setSignalStats({
           total: markers.length,
@@ -492,8 +546,12 @@ export default function LiveChart() {
           levels: Math.min(levels.length, 4),
           lastSignal: markers.length > 0 ? markers[markers.length - 1] : null,
         })
+        setTradeStats(ts || null)
+        setHaTrend(haStatus || null)
       } else {
         setSignalStats(null)
+        setTradeStats(null)
+        setHaTrend(null)
       }
     } catch (e) {
       console.warn('Signal computation error:', e)
@@ -538,7 +596,27 @@ export default function LiveChart() {
         applySignals(data)
 
         if (isFirstLoad.current) {
-          chartInstance.current?.timeScale().fitContent()
+          // v9: Default to 1-day view — zoom to last trading day
+          // User can zoom out manually or switch intervals for more history
+          if (chartInstance.current && data.length > 0) {
+            const lastTime = data[data.length - 1].time
+            // Find start of the last trading day (same UTC day as last candle)
+            const lastDayStart = Math.floor(lastTime / 86400) * 86400
+            // Show from start of last trading day to end, with some right padding
+            const candlesPerDay = interval === '1m' ? 375 : interval === '5m' ? 75 : 26
+            const fromTime = lastDayStart
+            // For 15m, show 2 days for better context
+            const daysToShow = interval === '15m' ? 2 : 1
+            const fromIdx = data.findIndex(d => d.time >= fromTime - (daysToShow - 1) * 86400)
+            if (fromIdx >= 0 && fromIdx < data.length - 5) {
+              chartInstance.current.timeScale().setVisibleLogicalRange({
+                from: fromIdx,
+                to: data.length - 1 + 5,  // small right padding
+              })
+            } else {
+              chartInstance.current.timeScale().fitContent()
+            }
+          }
           isFirstLoad.current = false
         }
       } else {
@@ -682,7 +760,7 @@ export default function LiveChart() {
 
       {/* ── Signal stats bar ── */}
       {showSignals && signalStats && (
-        <div className="px-3 py-1 border-b border-[#1e293b]/70 flex items-center gap-3 text-[10px] font-mono shrink-0 bg-[#0f172a]">
+        <div className="px-3 py-1 border-b border-[#1e293b]/70 flex items-center gap-3 text-[10px] font-mono shrink-0 bg-[#0f172a] flex-wrap">
           <span className="text-terminal-green font-medium">{signalStats.buys} Buy</span>
           <span className="text-terminal-red font-medium">{signalStats.sells} Sell</span>
           {signalStats.strong > 0 && <span className="text-amber-400 font-medium">{signalStats.strong} Strong</span>}
@@ -691,12 +769,75 @@ export default function LiveChart() {
           {signalStats.lastSignal && (
             <>
               <span className="text-[#475569]">|</span>
-              <span className={signalStats.lastSignal.text.includes('Buy') ? 'text-terminal-green' : 'text-terminal-red'}>
+              <span className={signalStats.lastSignal.text.includes('BUY') ? 'text-terminal-green' : 'text-terminal-red'}>
                 Latest: {signalStats.lastSignal.text}
               </span>
             </>
           )}
-          <span className="text-[#475569] ml-auto">Trend-based signals, not predictions</span>
+          {tradeStats && (
+            <>
+              <span className="text-[#475569]">|</span>
+              <span className="text-[#94a3b8]">Trades: {tradeStats.completedTrades}</span>
+              {tradeStats.completedTrades > 0 && (
+                <>
+                  <span className={tradeStats.winRate >= 50 ? 'text-terminal-green' : 'text-terminal-red'}>
+                    Win: {tradeStats.winRate}%
+                  </span>
+                  <span className={tradeStats.totalPnlPts >= 0 ? 'text-terminal-green' : 'text-terminal-red'}>
+                    P&L: {tradeStats.totalPnlPts > 0 ? '+' : ''}{tradeStats.totalPnlPts} pts
+                  </span>
+                </>
+              )}
+            </>
+          )}
+          {haTrend && (
+            <>
+              <span className="text-[#475569]">|</span>
+              <span className={`font-medium ${haTrend.isBullish ? 'text-terminal-green' : 'text-terminal-red'}`}>
+                HA: {haTrend.isBullish ? '▲' : '▼'}{haTrend.isStrong ? '●' : '○'} {haTrend.consecutive}
+                {haTrend.isEstablished ? ' TREND' : ''}
+                {haTrend.colorFlip ? ' FLIP!' : ''}
+                {haTrend.isIndecision ? ' ⟷' : ''}
+              </span>
+            </>
+          )}
+          <span className="text-[#475569] ml-auto">HA filtered • Dynamic SL • ATR trailing</span>
+        </div>
+      )}
+
+      {/* v4: Active trade status bar */}
+      {showSignals && activeTradeInfo && (
+        <div className={`px-3 py-1.5 border-b flex items-center gap-3 text-[10px] font-mono shrink-0 ${
+          activeTradeInfo.direction === 'long'
+            ? 'bg-terminal-green/5 border-terminal-green/20'
+            : 'bg-terminal-red/5 border-terminal-red/20'
+        }`}>
+          <span className={`font-bold ${activeTradeInfo.direction === 'long' ? 'text-terminal-green' : 'text-terminal-red'}`}>
+            ACTIVE {activeTradeInfo.direction === 'long' ? 'LONG ▲' : 'SHORT ▼'}
+          </span>
+          <span className="text-[#475569]">|</span>
+          <span className="text-blue-400">Entry: {activeTradeInfo.entry.toFixed(2)}</span>
+          <span className="text-[#475569]">|</span>
+          <span className="text-orange-400">SL: {activeTradeInfo.sl.toFixed(2)}</span>
+          <span className="text-[#475569]">|</span>
+          <span className="text-cyan-400">Target: {activeTradeInfo.target.toFixed(2)}</span>
+          {activeTradeInfo.currentPrice && (
+            <>
+              <span className="text-[#475569]">|</span>
+              {(() => {
+                const pnl = activeTradeInfo.direction === 'long'
+                  ? activeTradeInfo.currentPrice - activeTradeInfo.entry
+                  : activeTradeInfo.entry - activeTradeInfo.currentPrice
+                const pnlPct = ((pnl / activeTradeInfo.entry) * 100).toFixed(2)
+                return (
+                  <span className={pnl >= 0 ? 'text-terminal-green font-bold' : 'text-terminal-red font-bold'}>
+                    P&L: {pnl >= 0 ? '+' : ''}{pnlPct}% ({pnl >= 0 ? '+' : ''}{pnl.toFixed(2)} pts)
+                  </span>
+                )
+              })()}
+            </>
+          )}
+          <span className="text-amber-400/70 ml-auto animate-pulse">● TRACKING</span>
         </div>
       )}
 
@@ -778,6 +919,8 @@ export default function LiveChart() {
                 <span><span className="inline-block w-2 h-2 rounded-full bg-terminal-red mr-1 align-middle" />SuperTrend Down</span>
                 <span><span className="text-terminal-green mr-0.5">▲</span>Buy</span>
                 <span><span className="text-terminal-red mr-0.5">▼</span>Sell</span>
+                <span><span className="text-cyan-400 mr-0.5">●</span>Exit Profit</span>
+                <span><span className="text-orange-400 mr-0.5">■</span>Exit Loss</span>
                 <span>S = Support</span>
                 <span>R = Resistance</span>
               </>
