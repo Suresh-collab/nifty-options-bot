@@ -20,10 +20,13 @@ export default function App() {
     fetchMarketStatus()
     fetchTradeHistory()
 
-    // Auto-refresh every 3 minutes during market hours
+    // Auto-refresh every 3 minutes during market hours (IST)
     const iv = setInterval(() => {
       const now = new Date()
-      const h = now.getHours(), m = now.getMinutes()
+      // Convert to IST regardless of browser timezone
+      const istStr = now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false })
+      const istDate = new Date(istStr)
+      const h = istDate.getHours(), m = istDate.getMinutes()
       const inMarket = (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 30))
       if (inMarket) fetchSignal()
     }, 3 * 60 * 1000)

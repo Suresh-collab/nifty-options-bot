@@ -1,8 +1,11 @@
 import yfinance as yf
 import pandas as pd
 import httpx
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone, timedelta
 import time
+
+# IST timezone: UTC+5:30
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # In-memory cache: {key: (timestamp, data)}
 _cache: dict = {}
@@ -33,12 +36,12 @@ def _cache_set(key, data):
     _cache[key] = (time.time(), data)
 
 def is_market_open() -> bool:
-    now = datetime.now()
+    now = datetime.now(IST)
     if now.weekday() >= 5:
         return False
     market_open  = dtime(9, 15)
     market_close = dtime(15, 30)
-    return market_open <= now.time() <= market_close
+    return market_open <= now.time().replace(tzinfo=None) <= market_close
 
 
 def _fetch_yahoo_direct(symbol: str, interval: str) -> pd.DataFrame:
@@ -79,6 +82,99 @@ def _fetch_yahoo_direct(symbol: str, interval: str) -> pd.DataFrame:
     df = df.drop(columns=["_ts"])
     df.index.name = "Datetime"
     return df
+
+
+NSE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.nseindia.com/",
+    "Connection": "keep-alive",
+}
+
+NSE_CHART_INDEXES = {
+    "NIFTY":  "NIFTY 50",
+    "SENSEX": "SENSEX",
+}
+
+
+def _fetch_nse_chart(ticker: str, interval: str = "5m") -> list:
+    """
+    Fetch intraday chart data from NSE India and aggregate into OHLCV candles.
+    NSE returns ~1-min resolution [timestamp_ms, price] pairs for the current day.
+    We aggregate these into candles of the requested interval.
+    Returns list of dicts: [{time, open, high, low, close, volume}, ...]
+    """
+    index_name = NSE_CHART_INDEXES.get(ticker.upper())
+    if not index_name:
+        return []
+
+    url = f"https://www.nseindia.com/api/chart-databyindex?index={index_name}&indices=true"
+
+    try:
+        with httpx.Client(headers=NSE_HEADERS, timeout=8, follow_redirects=True) as client:
+            # NSE requires a session cookie — hit homepage first
+            client.get("https://www.nseindia.com", timeout=5)
+            resp = client.get(url, timeout=5)
+            resp.raise_for_status()
+            raw = resp.json()
+    except Exception:
+        return []
+
+    # NSE response: {"gpiData": [[timestamp_ms, price], ...]}
+    data_points = raw.get("gpiData", [])
+    if not data_points or len(data_points) < 2:
+        return []
+
+    # Parse interval to seconds
+    interval_map = {"1m": 60, "5m": 300, "15m": 900}
+    bucket_secs = interval_map.get(interval, 300)
+
+    # Group data points into candle buckets
+    candles = []
+    bucket_start = None
+    bucket_prices = []
+
+    for point in data_points:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        ts_ms, price = point[0], point[1]
+        if price is None or price == 0:
+            continue
+
+        ts_sec = int(ts_ms / 1000)
+        bucket = (ts_sec // bucket_secs) * bucket_secs
+
+        if bucket_start is None:
+            bucket_start = bucket
+            bucket_prices = [price]
+        elif bucket == bucket_start:
+            bucket_prices.append(price)
+        else:
+            # Close the previous bucket
+            candles.append({
+                "time": bucket_start,
+                "open": round(bucket_prices[0], 2),
+                "high": round(max(bucket_prices), 2),
+                "low": round(min(bucket_prices), 2),
+                "close": round(bucket_prices[-1], 2),
+                "volume": 0,  # NSE chart API doesn't provide volume
+            })
+            bucket_start = bucket
+            bucket_prices = [price]
+
+    # Don't forget the last (forming) bucket
+    if bucket_prices:
+        candles.append({
+            "time": bucket_start,
+            "open": round(bucket_prices[0], 2),
+            "high": round(max(bucket_prices), 2),
+            "low": round(min(bucket_prices), 2),
+            "close": round(bucket_prices[-1], 2),
+            "volume": 0,
+        })
+
+    return candles
 
 
 def get_ohlcv(ticker: str, interval: str = "5m") -> pd.DataFrame:
@@ -128,8 +224,11 @@ def get_spot_price(ticker: str) -> float:
 def get_market_status() -> dict:
     from data.options_chain import get_next_expiry
     open_ = is_market_open()
-    now = datetime.now()
+    now = datetime.now(IST)
     expiry = get_next_expiry("NIFTY")
+    # Make expiry timezone-aware for correct delta calculation
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=IST)
     delta = expiry - now
     hours, rem = divmod(int(delta.total_seconds()), 3600)
     mins = rem // 60

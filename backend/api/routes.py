@@ -6,7 +6,7 @@ import pandas as pd
 import httpx
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from data.market_data import get_ohlcv, get_spot_price, get_market_status
+from data.market_data import get_ohlcv, get_spot_price, get_market_status, _fetch_nse_chart
 from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv, _fallback_chain
 from indicators.engine import compute_indicators
 from ai.signal_engine import generate_signal
@@ -94,6 +94,24 @@ async def get_chart(ticker: str, interval: str = "5m"):
         return records
     except Exception as e:
         raise HTTPException(500, f"Chart data failed: {str(e)}")
+
+
+# --- NSE Chart data (near real-time fallback) ---
+@router.get("/nse-chart/{ticker}")
+async def get_nse_chart(ticker: str, interval: str = "5m"):
+    """Fetch intraday chart data from NSE India (near real-time, today only)."""
+    ticker = ticker.upper()
+    if ticker not in ("NIFTY", "SENSEX"):
+        raise HTTPException(400, "ticker must be NIFTY or SENSEX")
+    try:
+        candles = _fetch_nse_chart(ticker, interval)
+        if not candles:
+            raise HTTPException(502, "NSE chart data unavailable")
+        return candles
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"NSE chart fetch failed: {str(e)}")
 
 
 # --- Market status ---

@@ -9,7 +9,7 @@
 
 | Decision | Value | Consequence |
 |---|---|---|
-| Real-money usage | **Unsure → treat as YES for safety** | All phases use real-money guardrails: paper-vs-live toggle default-off, mandatory sandbox tests before live broker calls, daily loss cap hardcoded, two-confirmation kill switch, audit log for every order. |
+| Real-money usage | **Deferred — paper/prototype first, real money last** | All phases use real-money guardrails: paper-vs-live toggle default-off, mandatory sandbox tests before live broker calls, daily loss cap hardcoded, two-confirmation kill switch, audit log for every order. **Live broker activation (`ENABLE_LIVE_BROKER=true` in a real account) is a manual step gated on user sign-off ONLY after Phases 0–5 are validated in paper/sandbox mode.** Phase 4 ships sandbox integration only; real-money flip is NOT part of Phase 4's exit gate. |
 | User model | **Solo user** | No auth, no `users` table in Phase 0. Skip JWT/OTP/OAuth. Single-tenant DB schema. Can be upgraded later via migration. |
 | First broker (Phase 4) | Zerodha Kite Connect | Other brokers (Angel One, Upstox, Fyers, 5paisa) implemented as adapter plugins in a future phase. |
 | Deployment target | Local dev first, Vercel (FE) + Render/Railway (BE) later | No infra migration until code is ready. |
@@ -143,7 +143,7 @@ All 5 TDD criteria pass. Risk engine has been exercised in paper mode for ≥ 3 
 | 4.7 | Audit log: every order attempt + every flag flip, immutable table | Query audit log after test run → every action present with timestamp + actor. |
 
 ### Exit gate
-Sandbox orders work end-to-end. Flipping `ENABLE_LIVE_BROKER=true` in real account is a **manual step** gated by user confirmation, not part of this phase's completion.
+Sandbox orders work end-to-end. **Phase 4 is complete when sandbox integration passes — NOT when live money is activated.** Flipping `ENABLE_LIVE_BROKER=true` against a real Zerodha account is a separate, explicit user action taken only after the full prototype (Phases 0–5) has been validated in paper mode.
 
 ---
 

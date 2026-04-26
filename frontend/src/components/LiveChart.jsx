@@ -574,6 +574,30 @@ export default function LiveChart() {
       if (!candleSeriesRef.current || data.length === 0) return
 
       data = toIST(data)
+
+      // Try NSE real-time data to patch the latest candles (reduces Yahoo delay)
+      try {
+        const nseRes = await fetch(`/api/nse-chart/${ticker}?interval=${interval}`)
+        if (nseRes.ok) {
+          const nseCandles = await nseRes.json()
+          if (nseCandles && nseCandles.length > 0) {
+            // NSE returns UTC timestamps — convert to IST
+            const nseIST = toIST(nseCandles)
+            // Merge: replace/append Yahoo candles with fresher NSE data
+            const yahooCutoff = data.length > 0 ? data[data.length - 1].time : 0
+            const nseNew = nseIST.filter(c => c.time >= yahooCutoff)
+            if (nseNew.length > 0) {
+              // Replace the last Yahoo candle if NSE has same timestamp
+              if (data.length > 0 && nseNew[0].time === data[data.length - 1].time) {
+                data[data.length - 1] = { ...data[data.length - 1], ...nseNew[0], volume: data[data.length - 1].volume || nseNew[0].volume }
+                nseNew.shift()
+              }
+              // Append any newer NSE candles
+              data = data.concat(nseNew)
+            }
+          }
+        }
+      } catch {} // NSE fallback is best-effort — don't break chart if it fails
       data = synthesizeVolume(data)
 
       const prev = lastDataRef.current
