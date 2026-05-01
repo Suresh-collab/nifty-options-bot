@@ -1,11 +1,9 @@
 """1.4 — backtest API endpoint integration tests."""
-import asyncio
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 import pandas as pd
 import numpy as np
-from datetime import timezone
 
 from main import app
 
@@ -20,21 +18,6 @@ def _mock_df(n: int = 200) -> pd.DataFrame:
     volumes = rng.integers(500_000, 5_000_000, n).astype(float)
     index = pd.date_range("2024-01-02 09:15", periods=n, freq="5min", tz="UTC")
     return pd.DataFrame({"o": opens, "h": highs, "l": lows, "c": closes, "v": volumes}, index=index)
-
-
-@pytest.mark.asyncio
-async def test_create_backtest_returns_id():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.post("/api/backtest", json={
-            "symbol": "NIFTY",
-            "start_date": "2024-01-01",
-            "end_date": "2024-03-01",
-            "capital": 100000,
-        })
-    assert res.status_code == 200
-    body = res.json()
-    assert "id" in body
-    assert body["status"] == "PENDING"
 
 
 @pytest.mark.asyncio
@@ -62,15 +45,20 @@ async def test_create_backtest_invalid_dates():
 
 
 @pytest.mark.asyncio
-async def test_get_backtest_not_found():
+async def test_create_backtest_invalid_capital():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.get("/api/backtest/nonexistent-uuid")
-    assert res.status_code == 404
+        res = await client.post("/api/backtest", json={
+            "symbol": "NIFTY",
+            "start_date": "2024-01-01",
+            "end_date": "2024-03-01",
+            "capital": -1000,
+        })
+    assert res.status_code == 400
 
 
 @pytest.mark.asyncio
-async def test_post_poll_get_complete():
-    """POST run → wait for background task → GET shows COMPLETE with result shape."""
+async def test_post_returns_complete_result_synchronously():
+    """POST run → result returned directly in the response (synchronous execution)."""
     mock_df = _mock_df()
 
     async def _fake_load_ohlcv(*args, **kwargs):
@@ -78,29 +66,45 @@ async def test_post_poll_get_complete():
 
     with patch("data.ohlcv_loader.load_ohlcv", new=_fake_load_ohlcv):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            post_res = await client.post("/api/backtest", json={
+            res = await client.post("/api/backtest", json={
                 "symbol": "NIFTY",
                 "start_date": "2024-01-01",
                 "end_date": "2024-03-01",
                 "capital": 100000,
             })
-            assert post_res.status_code == 200
-            run_id = post_res.json()["id"]
 
-            # Allow background task to run
-            await asyncio.sleep(0.5)
+    assert res.status_code == 200
+    data = res.json()
 
-            get_res = await client.get(f"/api/backtest/{run_id}")
+    # Shape contract
+    assert data["status"] == "COMPLETE"
+    assert "id" in data
+    assert "result" in data
+    result = data["result"]
+    assert "trades" in result
+    assert "metrics" in result
+    assert "equity_curve" in result
+    assert "benchmark" in result
 
-    assert get_res.status_code == 200
-    data = get_res.json()
-    assert data["status"] in ("RUNNING", "COMPLETE", "ERROR")
-    if data["status"] == "COMPLETE":
-        assert "trades" in data["result"]
-        assert "metrics" in data["result"]
-        assert "equity_curve" in data["result"]
-        assert "benchmark" in data["result"]
-        # Verify metrics shape
-        metrics = data["result"]["metrics"]
-        for key in ("total_trades", "win_rate", "net_pnl", "max_drawdown", "sharpe_ratio"):
-            assert key in metrics
+    # Metrics shape
+    for key in ("total_trades", "win_rate", "net_pnl", "max_drawdown", "sharpe_ratio"):
+        assert key in result["metrics"]
+
+
+@pytest.mark.asyncio
+async def test_post_returns_empty_result_when_no_data():
+    """POST with no DB data → returns COMPLETE with 0 trades (not a 500 error)."""
+    async def _empty_load(*args, **kwargs):
+        return pd.DataFrame(columns=["o", "h", "l", "c", "v"])
+
+    with patch("data.ohlcv_loader.load_ohlcv", new=_empty_load):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post("/api/backtest", json={
+                "symbol": "NIFTY",
+                "start_date": "2024-01-01",
+                "end_date": "2024-03-01",
+                "capital": 100000,
+            })
+
+    assert res.status_code == 200
+    assert res.json()["result"]["metrics"]["total_trades"] == 0

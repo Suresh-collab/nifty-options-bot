@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
@@ -109,23 +109,14 @@ function TradeTable({ trades }) {
 
 export default function BacktestTab() {
   const [form, setForm] = useState(DEFAULT_FORM)
-  const [status, setStatus] = useState(null)  // null | 'submitting' | 'polling' | 'complete' | 'error'
+  const [status, setStatus] = useState(null)  // null | 'running' | 'complete' | 'error'
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
-  const pollRef = useRef(null)
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }
-
   const handleRun = async () => {
-    stopPolling()
-    setStatus('submitting')
+    setStatus('running')
     setError(null)
     setResult(null)
 
@@ -146,29 +137,10 @@ export default function BacktestTab() {
         const err = await res.json()
         throw new Error(err.detail || `HTTP ${res.status}`)
       }
-      const { id } = await res.json()
-      setStatus('polling')
-
-      // Poll until complete or error
-      pollRef.current = setInterval(async () => {
-        try {
-          const pr = await fetch(`/api/backtest/${id}`)
-          const data = await pr.json()
-          if (data.status === 'COMPLETE') {
-            stopPolling()
-            setResult(data.result)
-            setStatus('complete')
-          } else if (data.status === 'ERROR') {
-            stopPolling()
-            setError(data.error || 'Backtest failed')
-            setStatus('error')
-          }
-        } catch {
-          stopPolling()
-          setError('Polling failed')
-          setStatus('error')
-        }
-      }, 1000)
+      const data = await res.json()
+      // API is synchronous — result is in the POST response directly
+      setResult(data.result)
+      setStatus('complete')
     } catch (e) {
       setError(e.message)
       setStatus('error')
@@ -248,10 +220,10 @@ export default function BacktestTab() {
           <div className="flex flex-col justify-end">
             <button
               onClick={handleRun}
-              disabled={status === 'submitting' || status === 'polling'}
+              disabled={status === 'running'}
               className="px-4 py-1.5 bg-terminal-blue text-white text-[11px] font-mono font-bold rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {status === 'submitting' ? 'Starting...' : status === 'polling' ? 'Running...' : 'Run Backtest'}
+              {status === 'running' ? 'Running...' : 'Run Backtest'}
             </button>
           </div>
         </div>
@@ -265,9 +237,9 @@ export default function BacktestTab() {
       )}
 
       {/* Loading indicator */}
-      {(status === 'submitting' || status === 'polling') && (
+      {status === 'running' && (
         <div className="text-[11px] font-mono text-[#475569] text-center py-8 animate-pulse">
-          {status === 'submitting' ? 'Submitting backtest...' : 'Running backtest...'}
+          Running backtest...
         </div>
       )}
 

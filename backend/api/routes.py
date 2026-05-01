@@ -1,6 +1,6 @@
 import uuid
 from typing import List
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
@@ -360,61 +360,19 @@ class BacktestRequest(BaseModel):
     tp_pct: float = 0.02
 
 
-# In-memory store for backtest runs (replaced by DB in production path)
-_backtest_store: dict[str, dict] = {}
+@router.post("/backtest")
+async def create_backtest(req: BacktestRequest):
+    """
+    Run a backtest synchronously and return the full result.
 
-
-async def _run_backtest_task(run_id: str, req: BacktestRequest) -> None:
-    """Background task: load OHLCV, run backtester, persist result."""
-    import asyncio
-    from datetime import timezone as tz
+    Runs inline (no background task) so it works on Vercel serverless where
+    the execution context is frozen after the HTTP response is sent.
+    The computation is fast: ~700 bars for 60 days of 5m data takes < 1 s.
+    """
     from db.base import get_session_factory
     from data.ohlcv_loader import load_ohlcv
     from backtesting.engine import run_backtest, benchmark_buy_hold
-    from sqlalchemy import text
 
-    _backtest_store[run_id]["status"] = "RUNNING"
-    try:
-        factory = get_session_factory()
-        start_dt = datetime.combine(req.start_date, datetime.min.time()).replace(tzinfo=tz.utc)
-        end_dt = datetime.combine(req.end_date, datetime.max.time()).replace(tzinfo=tz.utc)
-
-        async with factory() as session:
-            df = await load_ohlcv(req.symbol.upper(), "5m", start_dt, end_dt, session)
-
-        result = run_backtest(df, req.symbol.upper(), req.capital, req.sl_pct, req.tp_pct)
-        result["benchmark"] = benchmark_buy_hold(df, req.capital)
-
-        _backtest_store[run_id].update({
-            "status": "COMPLETE",
-            "result": result,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        })
-
-        # Persist to DB (best-effort — don't fail the task if DB write fails)
-        try:
-            async with factory() as session:
-                await session.execute(
-                    text(
-                        "UPDATE backtest_runs SET status = :status, result_json = :result "
-                        "WHERE id = :id"
-                    ),
-                    {"status": "COMPLETE", "result": result, "id": run_id},
-                )
-                await session.commit()
-        except Exception:
-            pass  # DB is optional for in-memory path
-
-    except Exception as exc:
-        _backtest_store[run_id].update({
-            "status": "ERROR",
-            "error": str(exc),
-        })
-
-
-@router.post("/backtest")
-async def create_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
-    """Start a backtest run. Returns run_id for polling via GET /api/backtest/{id}."""
     symbol = req.symbol.upper()
     if symbol not in ("NIFTY", "BANKNIFTY"):
         raise HTTPException(400, "symbol must be NIFTY or BANKNIFTY")
@@ -424,23 +382,46 @@ async def create_backtest(req: BacktestRequest, background_tasks: BackgroundTask
         raise HTTPException(400, "capital must be positive")
 
     run_id = str(uuid.uuid4())
-    _backtest_store[run_id] = {
-        "id": run_id,
-        "status": "PENDING",
-        "symbol": symbol,
-        "start_date": req.start_date.isoformat(),
-        "end_date": req.end_date.isoformat(),
-        "capital": req.capital,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    background_tasks.add_task(_run_backtest_task, run_id, req)
-    return {"id": run_id, "status": "PENDING"}
+    start_dt = datetime.combine(req.start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+    end_dt = datetime.combine(req.end_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            df = await load_ohlcv(symbol, "5m", start_dt, end_dt, session)
+
+        result = run_backtest(df, symbol, req.capital, req.sl_pct, req.tp_pct)
+        result["benchmark"] = benchmark_buy_hold(df, req.capital)
+
+        return {
+            "id": run_id,
+            "status": "COMPLETE",
+            "symbol": symbol,
+            "start_date": req.start_date.isoformat(),
+            "end_date": req.end_date.isoformat(),
+            "capital": req.capital,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "result": result,
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"Backtest failed: {exc}")
 
 
-@router.get("/backtest/{run_id}")
-async def get_backtest(run_id: str):
-    """Poll backtest run status and result."""
-    run = _backtest_store.get(run_id)
-    if run is None:
-        raise HTTPException(404, f"backtest run {run_id!r} not found")
-    return run
+# ---------------------------------------------------------------------------
+# OHLCV data refresh (seed endpoint — call once to populate ohlcv_cache)
+# ---------------------------------------------------------------------------
+
+@router.post("/refresh-ohlcv")
+async def refresh_ohlcv_endpoint():
+    """
+    Fetch latest OHLCV data from yfinance and upsert into ohlcv_cache.
+    Call this once after deployment to seed the database.
+    Returns a summary of rows inserted per symbol/interval.
+    """
+    from data.ohlcv_loader import refresh_ohlcv
+    try:
+        summary = await refresh_ohlcv()
+        return {"status": "ok", "summary": summary}
+    except Exception as exc:
+        raise HTTPException(500, f"OHLCV refresh failed: {exc}")
