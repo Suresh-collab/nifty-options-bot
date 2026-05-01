@@ -4,3 +4,10 @@ numpy>=1.26.4,<2.0.0
 pandas>=2.0.0
 yfinance==0.2.40
 aiosqlite==0.20.0
+python-multipart>=0.0.9
+
+# Phase 0 — Postgres, config, logging (needed by backtest + refresh-ohlcv endpoints)
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+pydantic-settings>=2.3.0
+python-json-logger>=2.0.7

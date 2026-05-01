@@ -158,11 +158,11 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right col: optimizer + option chart + news (4 cols) */}
+            {/* Right col: news → optimizer → option chart (4 cols) */}
             <div className="lg:col-span-4 space-y-4">
+              <MarketNews />
               <BudgetOptimizer />
               <OptionChart ticker={ticker} expiry={expiry} />
-              <MarketNews />
             </div>
           </div>
         )}
