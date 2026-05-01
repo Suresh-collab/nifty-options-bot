@@ -99,8 +99,13 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     out["ema_cross"] = np.sign(ema9 - ema21).astype(float)
 
     # --- Volume ratio ---
-    vol_ma = v.rolling(20, min_periods=1).mean().replace(0, np.nan)
-    out["vol_ratio"] = v / vol_ma
+    # NSE index tickers (^NSEI, ^NSEBANK) return volume=0 from Yahoo Finance.
+    # Fall back to neutral 1.0 so the feature exists without poisoning dropna().
+    vol_ma = v.rolling(20, min_periods=1).mean()
+    if vol_ma.eq(0).all() or vol_ma.isna().all():
+        out["vol_ratio"] = 1.0
+    else:
+        out["vol_ratio"] = (v / vol_ma.replace(0, np.nan)).fillna(1.0)
 
     # --- Time features (cyclical; only meaningful for intraday bars) ---
     is_intraday = _is_intraday(df)
