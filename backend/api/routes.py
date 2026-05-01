@@ -143,12 +143,17 @@ async def _ml_shadow(ticker: str, df: pd.DataFrame) -> dict:
         if regime_clf is None or direction_model is None:
             return {"status": "no_model", "message": "Run training script first"}
 
-        feat = build_features(df)
+        # get_ohlcv() returns yfinance columns (Open/High/Low/Close/Volume).
+        # build_features() expects lowercase (o/h/l/c/v) as stored in ohlcv_cache.
+        col_map = {"Open": "o", "High": "h", "Low": "l", "Close": "c", "Volume": "v"}
+        ml_df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+        feat = build_features(ml_df)
         if feat.empty:
             return {"status": "no_features"}
 
-        feat["regime"] = regime_clf.predict(df).reindex(feat.index).fillna(2)
-        regime_label = regime_clf.predict_label(df).iloc[-1] if not df.empty else "UNKNOWN"
+        feat["regime"] = regime_clf.predict(ml_df).reindex(feat.index).fillna(2)
+        regime_label = regime_clf.predict_label(ml_df).iloc[-1] if not ml_df.empty else "UNKNOWN"
 
         direction, confidence = ml_predict(direction_model, feat)
         dir_map = {1: "BUY_CE", -1: "BUY_PE", 0: "AVOID"}
