@@ -113,7 +113,25 @@ export default function BacktestTab() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
 
+  const [seedStatus, setSeedStatus] = useState(null)  // null | 'loading' | 'done' | 'error'
+  const [seedInfo, setSeedInfo] = useState(null)
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleLoadData = async () => {
+    setSeedStatus('loading')
+    setSeedInfo(null)
+    try {
+      const res = await fetch('/api/refresh-ohlcv', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`)
+      setSeedInfo(data.summary)
+      setSeedStatus('done')
+    } catch (e) {
+      setSeedInfo(e.message)
+      setSeedStatus('error')
+    }
+  }
 
   const handleRun = async () => {
     setStatus('running')
@@ -152,6 +170,36 @@ export default function BacktestTab() {
 
   return (
     <div className="space-y-4">
+      {/* Data seed panel */}
+      <div className="bg-[#0f172a] border border-[#1e293b] rounded p-4 flex flex-wrap items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-mono text-[#475569] uppercase tracking-widest mb-1">
+            Market Data
+          </div>
+          <div className="text-[11px] font-mono text-[#64748b]">
+            Load 60 days of 5-min + 2 years of daily OHLCV for NIFTY &amp; BANKNIFTY into the database.
+            Run this once before backtesting, or after 60 days to refresh.
+          </div>
+          {seedStatus === 'done' && seedInfo && (
+            <div className="mt-2 text-[10px] font-mono text-green-400 space-y-0.5">
+              {Object.entries(seedInfo).map(([k, v]) => (
+                <div key={k}>{k}: <span className="text-green-300">{v} rows</span></div>
+              ))}
+            </div>
+          )}
+          {seedStatus === 'error' && (
+            <div className="mt-2 text-[10px] font-mono text-red-400">{seedInfo}</div>
+          )}
+        </div>
+        <button
+          onClick={handleLoadData}
+          disabled={seedStatus === 'loading'}
+          className="shrink-0 px-4 py-1.5 bg-[#1e293b] border border-[#334155] text-white text-[11px] font-mono rounded hover:border-terminal-blue hover:text-terminal-blue disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {seedStatus === 'loading' ? 'Loading...' : seedStatus === 'done' ? 'Refresh Data' : 'Load Market Data'}
+        </button>
+      </div>
+
       {/* Form */}
       <div className="bg-[#0f172a] border border-[#1e293b] rounded p-4">
         <div className="text-[10px] font-mono text-[#475569] uppercase tracking-widest mb-4">
