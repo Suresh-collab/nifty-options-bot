@@ -1,4 +1,4 @@
-name: CI - Build & Deploy Check
+name: CI - Build & Test
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  frontend-build:
-    name: Frontend Build
+  frontend:
+    name: Frontend Build + Test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,12 +20,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: "18"
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci || npm install
+
+      - name: Run vitest + coverage
+        run: npm run test:coverage
 
       - name: Build frontend
         run: npm run build
@@ -37,8 +40,8 @@ jobs:
           path: frontend/dist/
           retention-days: 7
 
-  backend-check:
-    name: Backend Syntax Check
+  backend:
+    name: Backend Test
     runs-on: ubuntu-latest
 
     steps:
@@ -47,15 +50,12 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r backend/requirements.txt
 
-      - name: Python syntax check
-        run: python -m py_compile api/index.py
-
-      - name: Check backend modules
+      - name: Module import check
         run: |
           cd backend
           python -c "
@@ -69,3 +69,25 @@ jobs:
                   print(f'FAIL: {mod} - {e}')
                   sys.exit(1)
           "
+
+      - name: Run pytest + coverage
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+          LOG_LEVEL: INFO
+          ENABLE_ML_SIGNAL: "false"
+          ENABLE_LIVE_BROKER: "false"
+          ENABLE_AUTO_EXECUTION: "false"
+        run: |
+          python -m pytest tests/ \
+            --cov=backend \
+            --cov-report=term-missing \
+            --cov-report=lcov:coverage/lcov.info \
+            -q
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage/
+          retention-days: 7
