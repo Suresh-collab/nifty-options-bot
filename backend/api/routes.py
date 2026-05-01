@@ -159,6 +159,10 @@ async def _ml_shadow(ticker: str, df: pd.DataFrame) -> dict:
             "confidence":   round(confidence, 3),
             "regime":       regime_label,
         }
+    except ImportError:
+        # scikit-learn / xgboost not installed in this environment (e.g. Vercel).
+        # Return no_model so the frontend silently skips the ML panel.
+        return {"status": "no_model", "message": "ML packages not available in this environment"}
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("ML shadow inference failed: %s", exc)

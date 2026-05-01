@@ -12,7 +12,8 @@ asyncpg>=0.29.0
 pydantic-settings>=2.3.0
 python-json-logger>=2.0.7
 
-# Phase 2 — ML signal layer (inference only on Vercel; training runs locally)
-scikit-learn>=1.4.0
-xgboost>=2.0.0
-joblib>=1.3.0
+# Phase 2 — ML packages are NOT included here (Vercel bundle).
+# sklearn + scipy + xgboost = ~287MB unzipped, exceeding Vercel's 250MB limit.
+# These are installed via backend/requirements.txt for local dev and training only.
+# On Vercel, _ml_shadow() catches the ImportError and returns {status: "no_ml"}.
+# Future: convert models to ONNX (onnxruntime ~15MB) to enable Vercel ML inference.
