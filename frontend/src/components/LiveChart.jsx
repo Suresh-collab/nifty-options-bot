@@ -62,7 +62,7 @@ function getVolumeCap(data) {
   return sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1] || 1
 }
 
-export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle', defaultShowSignals = true }) {
+export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle', defaultShowSignals = true, defaultShowVolume = true }) {
   const chartRef = useRef(null)
   const rsiChartRef = useRef(null)
   const macdChartRef = useRef(null)
@@ -111,7 +111,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const [showSignals, setShowSignals] = useState(defaultShowSignals)
   const [showRSI, setShowRSI] = useState(false)
   const [showMACD, setShowMACD] = useState(false)
-  const [showVolume, setShowVolume] = useState(true)
+  const [showVolume, setShowVolume] = useState(defaultShowVolume)
   const [showPivots, setShowPivots] = useState(false)
   const [showEMA, setShowEMA] = useState(false)
   const [signalStats, setSignalStats] = useState(null)
@@ -215,7 +215,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     const stLineSeries = chart.addLineSeries({
       lineWidth: 2,
       priceLineVisible: false,
-      lastValueVisible: true,
+      lastValueVisible: !compact,   // grid: no axis price box, line color is enough
       crosshairMarkerVisible: true,
       title: 'SuperTrend',
     })
@@ -475,13 +475,14 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       // Draw S/R levels
       if (showSignals) {
         for (const level of levels.slice(0, 4)) {
+          const tag = level.type === 'support' ? 'S' : 'R'
           const priceLine = candleSeriesRef.current.createPriceLine({
             price: level.price,
             color: level.type === 'support' ? '#22c55e80' : '#ef444480',
             lineWidth: 1,
             lineStyle: 2,
-            axisLabelVisible: true,
-            title: `${level.type === 'support' ? 'S' : 'R'} ${level.price.toFixed(0)}`,
+            axisLabelVisible: !compact,           // compact: axis already shows price
+            title: compact ? tag : `${tag} ${level.price.toFixed(0)}`,
           })
           srLinesRef.current.push(priceLine)
         }
@@ -515,33 +516,34 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
 
       // v4: Draw active trade zone lines (SL, Target, Entry)
       if (showSignals && activeTradeZone) {
+        const dir = activeTradeZone.direction === 'long' ? '▲' : '▼'
         const entryLine = candleSeriesRef.current.createPriceLine({
           price: activeTradeZone.entryPrice,
-          color: '#3b82f6',  // blue for entry
+          color: '#3b82f6',
           lineWidth: 2,
-          lineStyle: 0,  // solid
-          axisLabelVisible: true,
-          title: `ENTRY ${activeTradeZone.direction === 'long' ? '▲' : '▼'} ${activeTradeZone.entryPrice.toFixed(2)}`,
+          lineStyle: 0,
+          axisLabelVisible: !compact,
+          title: compact ? `ENTRY ${dir}` : `ENTRY ${dir} ${activeTradeZone.entryPrice.toFixed(2)}`,
         })
         tradeLinesRef.current.push(entryLine)
 
         const slLine = candleSeriesRef.current.createPriceLine({
           price: activeTradeZone.currentSL,
-          color: '#f97316',  // orange for SL
+          color: '#f97316',
           lineWidth: 2,
-          lineStyle: 2,  // dashed
-          axisLabelVisible: true,
-          title: `STOP LOSS ${activeTradeZone.currentSL.toFixed(2)}`,
+          lineStyle: 2,
+          axisLabelVisible: !compact,
+          title: compact ? 'SL' : `STOP LOSS ${activeTradeZone.currentSL.toFixed(2)}`,
         })
         tradeLinesRef.current.push(slLine)
 
         const tpLine = candleSeriesRef.current.createPriceLine({
           price: activeTradeZone.currentTarget,
-          color: '#22d3ee',  // cyan for target
+          color: '#22d3ee',
           lineWidth: 2,
-          lineStyle: 2,  // dashed
-          axisLabelVisible: true,
-          title: `TARGET ${activeTradeZone.currentTarget.toFixed(2)}`,
+          lineStyle: 2,
+          axisLabelVisible: !compact,
+          title: compact ? 'TP' : `TARGET ${activeTradeZone.currentTarget.toFixed(2)}`,
         })
         tradeLinesRef.current.push(tpLine)
 
@@ -587,7 +589,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     } catch (e) {
       console.warn('Signal computation error:', e)
     }
-  }, [showSignals, showPivots, showVolume, showEMA, interval, applySubCharts])
+  }, [showSignals, showPivots, showVolume, showEMA, interval, compact, applySubCharts])
 
   const fetchChart = useCallback(async (fullLoad = false) => {
     if (fullLoad) setLoading(true)
@@ -654,11 +656,13 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         if (isFirstLoad.current) {
           if (chartInstance.current && data.length > 0) {
             let fromIdx
+            let toIdx = data.length - 1 + 3
             if (compact) {
-              // Grid view: tight zoom tuned to fit each timeframe cleanly
-              // 1m=90 min, 5m=35 candles (~3h), 15m=52 candles (2 days), 1d=90 bars
+              // Grid view: live candle at ~75% from left → 25% right empty space
               const compactCount = interval === '1m' ? 90 : interval === '5m' ? 35 : interval === '15m' ? 52 : 90
-              fromIdx = Math.max(0, data.length - compactCount)
+              const rightPad = Math.round(compactCount * 0.25)
+              fromIdx = Math.max(0, data.length - (compactCount - rightPad))
+              toIdx = data.length - 1 + rightPad
             } else {
               // Single view: show last 1 trading day (2 days for 15m)
               const lastTime = data[data.length - 1].time
@@ -671,7 +675,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             if (fromIdx >= 0 && fromIdx < data.length - 5) {
               chartInstance.current.timeScale().setVisibleLogicalRange({
                 from: fromIdx,
-                to: data.length - 1 + 3,
+                to: toIdx,
               })
             } else {
               chartInstance.current.timeScale().fitContent()
