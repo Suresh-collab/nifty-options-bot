@@ -39,6 +39,21 @@ function synthesizeVolume(data) {
   })
 }
 
+/** Compute Heikin Ashi candles from raw OHLCV — smoother trend visualization */
+function computeHA(data) {
+  const ha = []
+  for (let i = 0; i < data.length; i++) {
+    const haClose = (data[i].open + data[i].high + data[i].low + data[i].close) / 4
+    const haOpen = i === 0
+      ? (data[i].open + data[i].close) / 2
+      : (ha[i - 1].open + ha[i - 1].close) / 2
+    const haHigh = Math.max(data[i].high, haOpen, haClose)
+    const haLow = Math.min(data[i].low, haOpen, haClose)
+    ha.push({ ...data[i], open: haOpen, high: haHigh, low: haLow, close: haClose })
+  }
+  return ha
+}
+
 /** Cap volume at 95th percentile to prevent outlier compression */
 function getVolumeCap(data) {
   const volumes = data.map(d => d.volume || 0).filter(v => v > 0)
@@ -47,7 +62,7 @@ function getVolumeCap(data) {
   return sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1] || 1
 }
 
-export default function LiveChart({ defaultInterval = '5m', compact = false }) {
+export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle' }) {
   const chartRef = useRef(null)
   const rsiChartRef = useRef(null)
   const macdChartRef = useRef(null)
@@ -74,11 +89,21 @@ export default function LiveChart({ defaultInterval = '5m', compact = false }) {
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
   const [interval, setInterval_] = useState(defaultInterval)
+  const [candleType, setCandleType] = useState(defaultCandleType)
+  const candleTypeRef = useRef(defaultCandleType)
 
   useEffect(() => {
     setInterval_(defaultInterval)
     isFirstLoad.current = true
   }, [defaultInterval])
+
+  useEffect(() => {
+    setCandleType(defaultCandleType)
+    candleTypeRef.current = defaultCandleType
+  }, [defaultCandleType])
+
+  // Keep ref in sync so fetchChart closure always has current value without re-subscribing
+  useEffect(() => { candleTypeRef.current = candleType }, [candleType])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
@@ -610,14 +635,15 @@ export default function LiveChart({ defaultInterval = '5m', compact = false }) {
       const isNewData = prev.length === 0 || fullLoad
 
       if (isNewData) {
+        const displayData = candleTypeRef.current === 'ha' ? computeHA(data) : data
         candleSeriesRef.current.setData(
-          data.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }))
+          displayData.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }))
         )
         // Normalize volume: cap at 95th percentile so outliers don't crush other bars
         const vCap = getVolumeCap(data)
         volCapRef.current = vCap
         volumeSeriesRef.current.setData(
-          data.map(d => ({
+          displayData.map(d => ({
             time: d.time,
             value: Math.min(d.volume || 0, vCap * 1.5),
             color: d.close >= d.open ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
@@ -651,7 +677,9 @@ export default function LiveChart({ defaultInterval = '5m', compact = false }) {
         }
       } else {
         const lastOldTime = prev.length > 0 ? prev[prev.length - 1].time : 0
-        for (const d of data) {
+        // HA requires full recompute for accurate values on each tick
+        const displayData = candleTypeRef.current === 'ha' ? computeHA(data) : data
+        for (const d of displayData) {
           if (d.time >= lastOldTime) {
             candleSeriesRef.current.update({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close })
             volumeSeriesRef.current.update({
@@ -690,6 +718,15 @@ export default function LiveChart({ defaultInterval = '5m', compact = false }) {
   useEffect(() => {
     if (lastDataRef.current.length > 0) applySignals(lastDataRef.current)
   }, [showSignals, showPivots, showVolume, showEMA, applySignals])
+
+  // Re-render candles instantly when candleType toggles (no refetch)
+  useEffect(() => {
+    if (!lastDataRef.current.length || !candleSeriesRef.current) return
+    const displayData = candleType === 'ha' ? computeHA(lastDataRef.current) : lastDataRef.current
+    candleSeriesRef.current.setData(
+      displayData.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }))
+    )
+  }, [candleType])
 
   const changeColor = priceChange >= 0 ? 'text-terminal-green' : 'text-terminal-red'
   const changeSign = priceChange >= 0 ? '+' : ''
@@ -755,22 +792,30 @@ export default function LiveChart({ defaultInterval = '5m', compact = false }) {
             label={showSignals ? '● Signals' : '○ Signals'}
             activeClass="bg-terminal-green/15 text-terminal-green border border-terminal-green/30"
             title="Buy/Sell signals + SuperTrend + S/R levels" />
-          <ToggleBtn active={showEMA} onClick={() => setShowEMA(!showEMA)}
-            label="EMA"
-            activeClass="bg-amber-500/15 text-amber-400 border border-amber-500/30"
-            title="EMA 20 (amber) & EMA 50 (purple) moving averages" />
-          <ToggleBtn active={showRSI} onClick={() => setShowRSI(!showRSI)}
-            label="RSI"
-            activeClass="bg-purple-500/15 text-purple-400 border border-purple-500/30"
-            title="RSI (14) — Overbought >70, Oversold <30" />
-          <ToggleBtn active={showMACD} onClick={() => setShowMACD(!showMACD)}
-            label="MACD"
-            activeClass="bg-blue-500/15 text-blue-400 border border-blue-500/30"
-            title="MACD (12,26,9) histogram" />
-          <ToggleBtn active={showPivots} onClick={() => setShowPivots(!showPivots)}
-            label="Pivot"
-            activeClass="bg-purple-500/15 text-purple-400 border border-purple-500/30"
-            title="Daily Pivot Points: PP, R1, R2, S1, S2" />
+          <ToggleBtn active={candleType === 'ha'} onClick={() => setCandleType(candleType === 'ha' ? 'candle' : 'ha')}
+            label="HA"
+            activeClass="bg-orange-500/15 text-orange-400 border border-orange-500/30"
+            title="Heikin Ashi candles (smoothed trend)" />
+          {!compact && (
+            <>
+              <ToggleBtn active={showEMA} onClick={() => setShowEMA(!showEMA)}
+                label="EMA"
+                activeClass="bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                title="EMA 20 (amber) & EMA 50 (purple) moving averages" />
+              <ToggleBtn active={showRSI} onClick={() => setShowRSI(!showRSI)}
+                label="RSI"
+                activeClass="bg-purple-500/15 text-purple-400 border border-purple-500/30"
+                title="RSI (14) — Overbought >70, Oversold <30" />
+              <ToggleBtn active={showMACD} onClick={() => setShowMACD(!showMACD)}
+                label="MACD"
+                activeClass="bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                title="MACD (12,26,9) histogram" />
+              <ToggleBtn active={showPivots} onClick={() => setShowPivots(!showPivots)}
+                label="Pivot"
+                activeClass="bg-purple-500/15 text-purple-400 border border-purple-500/30"
+                title="Daily Pivot Points: PP, R1, R2, S1, S2" />
+            </>
+          )}
           <ToggleBtn active={showVolume} onClick={() => setShowVolume(!showVolume)}
             label="Vol"
             activeClass="bg-blue-500/15 text-blue-400 border border-blue-500/30"
