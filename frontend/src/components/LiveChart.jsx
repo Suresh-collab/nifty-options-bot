@@ -62,7 +62,7 @@ function getVolumeCap(data) {
   return sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1] || 1
 }
 
-export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle' }) {
+export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle', defaultShowSignals = true }) {
   const chartRef = useRef(null)
   const rsiChartRef = useRef(null)
   const macdChartRef = useRef(null)
@@ -108,7 +108,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const [error, setError] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
   const [priceChange, setPriceChange] = useState(0)
-  const [showSignals, setShowSignals] = useState(true)
+  const [showSignals, setShowSignals] = useState(defaultShowSignals)
   const [showRSI, setShowRSI] = useState(false)
   const [showMACD, setShowMACD] = useState(false)
   const [showVolume, setShowVolume] = useState(true)
@@ -652,22 +652,26 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         applySignals(data)
 
         if (isFirstLoad.current) {
-          // v9: Default to 1-day view — zoom to last trading day
-          // User can zoom out manually or switch intervals for more history
           if (chartInstance.current && data.length > 0) {
-            const lastTime = data[data.length - 1].time
-            // Find start of the last trading day (same UTC day as last candle)
-            const lastDayStart = Math.floor(lastTime / 86400) * 86400
-            const candlesPerDay = interval === '1m' ? 375 : interval === '5m' ? 75 : interval === '15m' ? 26 : 1
-            const fromTime = lastDayStart
-            const daysToShow = interval === '15m' ? 2 : 1
-            const fromIdx = interval === '1d'
-              ? Math.max(0, data.length - 90)
-              : data.findIndex(d => d.time >= fromTime - (daysToShow - 1) * 86400)
+            let fromIdx
+            if (compact) {
+              // Grid view: tight zoom tuned to fit each timeframe cleanly
+              // 1m=90 min, 5m=35 candles (~3h), 15m=52 candles (2 days), 1d=90 bars
+              const compactCount = interval === '1m' ? 90 : interval === '5m' ? 35 : interval === '15m' ? 52 : 90
+              fromIdx = Math.max(0, data.length - compactCount)
+            } else {
+              // Single view: show last 1 trading day (2 days for 15m)
+              const lastTime = data[data.length - 1].time
+              const lastDayStart = Math.floor(lastTime / 86400) * 86400
+              const daysToShow = interval === '15m' ? 2 : 1
+              fromIdx = interval === '1d'
+                ? Math.max(0, data.length - 90)
+                : data.findIndex(d => d.time >= lastDayStart - (daysToShow - 1) * 86400)
+            }
             if (fromIdx >= 0 && fromIdx < data.length - 5) {
               chartInstance.current.timeScale().setVisibleLogicalRange({
                 from: fromIdx,
-                to: data.length - 1 + 5,  // small right padding
+                to: data.length - 1 + 3,
               })
             } else {
               chartInstance.current.timeScale().fitContent()

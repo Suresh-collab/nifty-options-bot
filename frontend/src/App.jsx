@@ -102,16 +102,21 @@ export default function App() {
           /* ── 4-chart grid: 1m · 5m · 15m · 1D ── */
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
-              { label: '1 MIN',  interval: '1m',  candleType: 'candle' },
-              { label: '5 MIN',  interval: '5m',  candleType: 'ha' },
-              { label: '15 MIN', interval: '15m', candleType: 'ha' },
-              { label: 'DAILY',  interval: '1d',  candleType: 'ha' },
-            ].map(({ label, interval, candleType }) => (
+              { label: '1 MIN',  interval: '1m',  candleType: 'candle', signals: true  },
+              { label: '5 MIN',  interval: '5m',  candleType: 'ha',     signals: true  },
+              { label: '15 MIN', interval: '15m', candleType: 'ha',     signals: true  },
+              { label: 'DAILY',  interval: '1d',  candleType: 'ha',     signals: false },
+            ].map(({ label, interval, candleType, signals }) => (
               <div key={interval}>
                 <div className="text-[10px] font-mono text-[#475569] uppercase tracking-widest mb-1 px-1">
                   {label}
                 </div>
-                <LiveChart defaultInterval={interval} compact={true} defaultCandleType={candleType} />
+                <LiveChart
+                  defaultInterval={interval}
+                  compact={true}
+                  defaultCandleType={candleType}
+                  defaultShowSignals={signals}
+                />
               </div>
             ))}
           </div>
