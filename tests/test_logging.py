@@ -14,7 +14,7 @@ def _reset_logging():
 
 @pytest.mark.asyncio
 async def test_request_id_in_response_header():
-    from backend.main import app
+    from main import app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health")
     assert response.status_code == 200
@@ -25,7 +25,7 @@ async def test_request_id_in_response_header():
 
 @pytest.mark.asyncio
 async def test_three_requests_each_get_unique_ids():
-    from backend.main import app
+    from main import app
     rids = []
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         for _ in range(3):
@@ -37,8 +37,8 @@ async def test_three_requests_each_get_unique_ids():
 @pytest.mark.asyncio
 async def test_log_lines_carry_request_id():
     """Log records emitted during a request must carry that request's ID."""
-    from backend.main import app
-    from backend.middleware.logging import request_id_var
+    from main import app
+    from middleware.logging import request_id_var
 
     captured: list[logging.LogRecord] = []
 

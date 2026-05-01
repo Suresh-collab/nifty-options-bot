@@ -3,8 +3,8 @@ import os
 import pytest
 from unittest.mock import patch
 
-from backend.config import feature_flags
-from backend.config.settings import get_settings
+from config import feature_flags
+from config.settings import get_settings
 
 
 def test_all_flags_default_off():

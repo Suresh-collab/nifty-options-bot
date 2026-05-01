@@ -11,10 +11,12 @@ import TradeConfirmModal from './components/TradeConfirmModal'
 import TradeHistory from './components/TradeHistory'
 import LiveChart from './components/LiveChart'
 import MarketNews from './components/MarketNews'
+import BacktestTab from './components/BacktestTab'
 
 export default function App() {
   const { fetchSignal, fetchMarketStatus, fetchTradeHistory, ticker, signalData } = useStore()
   const [viewMode, setViewMode] = useState('single')
+  const [activeTab, setActiveTab] = useState('live')
 
   useEffect(() => {
     fetchSignal()
@@ -54,6 +56,21 @@ export default function App() {
               PAPER TRADING v2.0
             </span>
           </div>
+          <div className="flex items-center gap-1">
+            {[['live', 'LIVE'], ['backtest', 'BACKTEST']].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`px-3 py-1.5 text-[10px] font-mono rounded transition-all ${
+                  activeTab === id
+                    ? 'bg-terminal-blue text-white'
+                    : 'text-[#64748b] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="text-[10px] font-mono text-[#475569]">
             Powered by AI · No broker required
           </div>
@@ -63,6 +80,11 @@ export default function App() {
       <MarketStatusBar />
 
       <main className="max-w-[1400px] mx-auto px-4 py-4 space-y-4">
+        {/* Backtest tab */}
+        {activeTab === 'backtest' && <BacktestTab />}
+
+        {/* Live trading tab */}
+        {activeTab === 'live' && <>
         {/* Controls row */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
@@ -154,6 +176,7 @@ export default function App() {
           Options trading involves significant risk. Always do your own research.
           Not SEBI registered. Not financial advice.
         </div>
+        </>}
       </main>
 
       <TradeConfirmModal />

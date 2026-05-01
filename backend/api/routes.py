@@ -1,11 +1,12 @@
+import uuid
 from typing import List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import pandas as pd
 import httpx
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, date, timezone
 from data.market_data import get_ohlcv, get_spot_price, get_market_status, _fetch_nse_chart
 from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv, _fallback_chain
 from indicators.engine import compute_indicators
@@ -344,3 +345,102 @@ async def get_news():
 
     unique.sort(key=lambda x: parse_date(x.get("pubDate", "")), reverse=True)
     return unique[:25]
+
+
+# ---------------------------------------------------------------------------
+# Backtesting endpoints (Phase 1)
+# ---------------------------------------------------------------------------
+
+class BacktestRequest(BaseModel):
+    symbol: str = "NIFTY"
+    start_date: date
+    end_date: date
+    capital: float = 100_000.0
+    sl_pct: float = 0.01
+    tp_pct: float = 0.02
+
+
+# In-memory store for backtest runs (replaced by DB in production path)
+_backtest_store: dict[str, dict] = {}
+
+
+async def _run_backtest_task(run_id: str, req: BacktestRequest) -> None:
+    """Background task: load OHLCV, run backtester, persist result."""
+    import asyncio
+    from datetime import timezone as tz
+    from db.base import get_session_factory
+    from data.ohlcv_loader import load_ohlcv
+    from backtesting.engine import run_backtest, benchmark_buy_hold
+    from sqlalchemy import text
+
+    _backtest_store[run_id]["status"] = "RUNNING"
+    try:
+        factory = get_session_factory()
+        start_dt = datetime.combine(req.start_date, datetime.min.time()).replace(tzinfo=tz.utc)
+        end_dt = datetime.combine(req.end_date, datetime.max.time()).replace(tzinfo=tz.utc)
+
+        async with factory() as session:
+            df = await load_ohlcv(req.symbol.upper(), "5m", start_dt, end_dt, session)
+
+        result = run_backtest(df, req.symbol.upper(), req.capital, req.sl_pct, req.tp_pct)
+        result["benchmark"] = benchmark_buy_hold(df, req.capital)
+
+        _backtest_store[run_id].update({
+            "status": "COMPLETE",
+            "result": result,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # Persist to DB (best-effort — don't fail the task if DB write fails)
+        try:
+            async with factory() as session:
+                await session.execute(
+                    text(
+                        "UPDATE backtest_runs SET status = :status, result_json = :result "
+                        "WHERE id = :id"
+                    ),
+                    {"status": "COMPLETE", "result": result, "id": run_id},
+                )
+                await session.commit()
+        except Exception:
+            pass  # DB is optional for in-memory path
+
+    except Exception as exc:
+        _backtest_store[run_id].update({
+            "status": "ERROR",
+            "error": str(exc),
+        })
+
+
+@router.post("/backtest")
+async def create_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
+    """Start a backtest run. Returns run_id for polling via GET /api/backtest/{id}."""
+    symbol = req.symbol.upper()
+    if symbol not in ("NIFTY", "BANKNIFTY"):
+        raise HTTPException(400, "symbol must be NIFTY or BANKNIFTY")
+    if req.start_date >= req.end_date:
+        raise HTTPException(400, "start_date must be before end_date")
+    if req.capital <= 0:
+        raise HTTPException(400, "capital must be positive")
+
+    run_id = str(uuid.uuid4())
+    _backtest_store[run_id] = {
+        "id": run_id,
+        "status": "PENDING",
+        "symbol": symbol,
+        "start_date": req.start_date.isoformat(),
+        "end_date": req.end_date.isoformat(),
+        "capital": req.capital,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    background_tasks.add_task(_run_backtest_task, run_id, req)
+    return {"id": run_id, "status": "PENDING"}
+
+
+@router.get("/backtest/{run_id}")
+async def get_backtest(run_id: str):
+    """Poll backtest run status and result."""
+    run = _backtest_store.get(run_id)
+    if run is None:
+        raise HTTPException(404, f"backtest run {run_id!r} not found")
+    return run

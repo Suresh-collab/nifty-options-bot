@@ -5,7 +5,7 @@ from sqlalchemy import String, Integer, Numeric, DateTime, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.db.base import Base
+from db.base import Base
 
 
 class Trade(Base):

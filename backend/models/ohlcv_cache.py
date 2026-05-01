@@ -2,7 +2,7 @@ from sqlalchemy import String, Float, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 
-from backend.db.base import Base
+from db.base import Base
 
 
 class OHLCVCache(Base):

@@ -6,12 +6,14 @@ from logging.config import fileConfig
 from sqlalchemy.ext.asyncio import create_async_engine
 from alembic import context
 
-# Make project root importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+# Add project root and backend/ to sys.path so both backend.X and short imports work
+_migrations_dir = os.path.dirname(__file__)
+sys.path.insert(0, os.path.join(_migrations_dir, "..", ".."))  # project root
+sys.path.insert(0, os.path.join(_migrations_dir, ".."))  # backend/
 
-from backend.config.settings import get_settings
-from backend.db.base import Base
-import backend.models  # noqa: F401 — registers all models with Base.metadata
+from config.settings import get_settings
+from db.base import Base
+import models  # noqa: F401 — registers all models with Base.metadata
 
 config = context.config
 

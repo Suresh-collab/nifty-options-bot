@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from backend.db.base import Base
+from db.base import Base
 
 
 class AuditLog(Base):

@@ -3,7 +3,7 @@ Feature-flag helper. Import and check flags like:
     from backend.config import feature_flags
     if feature_flags.is_enabled("ENABLE_ML_SIGNAL"): ...
 """
-from backend.config.settings import get_settings
+from config.settings import get_settings
 
 _FLAG_ATTRS = {
     "ENABLE_ML_SIGNAL": "enable_ml_signal",

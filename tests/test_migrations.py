@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from backend.config.settings import get_settings
+from config.settings import get_settings
 
 
 def _run_alembic(cmd: str, *args) -> None:

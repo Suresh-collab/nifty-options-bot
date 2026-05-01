@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-from backend.config.settings import get_settings
+from config.settings import get_settings
 
 
 @pytest.fixture(scope="session")

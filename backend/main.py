@@ -1,9 +1,16 @@
+import os
+import sys
+
+# Ensure backend/ is on sys.path so short imports (config.*, db.*, middleware.*)
+# work when uvicorn is started from the backend/ directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
-from backend.config.settings import get_settings
-from backend.middleware.logging import RequestLoggingMiddleware, setup_logging
+from config.settings import get_settings
+from middleware.logging import RequestLoggingMiddleware, setup_logging
 
 _settings = get_settings()
 setup_logging(_settings.log_level)
