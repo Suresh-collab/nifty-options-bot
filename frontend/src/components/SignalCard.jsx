@@ -120,7 +120,7 @@ export default function SignalCard() {
     </div>
   )
 
-  const { signal, spot, indicators } = signalData
+  const { signal, spot, indicators, ml } = signalData
   const cfg = directionConfig[signal.direction] || directionConfig.AVOID
   const bars = confidenceBar[signal.confidence] || 1
 
@@ -228,6 +228,44 @@ export default function SignalCard() {
         <div className="mb-4 p-3 rounded bg-terminal-bg/50 border-l-2 border-terminal-blue">
           <div className="text-xs font-mono text-terminal-dim mb-1">AI REASONING (technical analysis)</div>
           <p className="text-terminal-text text-sm leading-relaxed">{signal.reasoning}</p>
+        </div>
+      )}
+
+      {/* ML Shadow Panel */}
+      {ml && ml.direction && ml.status !== 'no_model' && (
+        <div className="mb-4 p-3 rounded border border-terminal-blue/30 bg-terminal-blue/5">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-[10px] font-mono text-terminal-blue uppercase tracking-wider">
+              AI/ML {ml.status === 'active' ? '(ACTIVE)' : '(SHADOW MODE)'}
+            </div>
+            {ml.regime && (
+              <div className="text-[10px] font-mono text-terminal-dim">
+                Regime: <span className={`font-bold ${
+                  ml.regime === 'TRENDING_UP' ? 'text-terminal-green' :
+                  ml.regime === 'TRENDING_DOWN' ? 'text-terminal-red' :
+                  'text-terminal-amber'
+                }`}>{ml.regime.replace('_', ' ')}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-sm font-mono font-bold ${
+              ml.direction === 'BUY_CE' ? 'text-terminal-green' :
+              ml.direction === 'BUY_PE' ? 'text-terminal-red' :
+              'text-terminal-amber'
+            }`}>
+              {ml.direction === 'BUY_CE' ? '▲ BUY CALL' :
+               ml.direction === 'BUY_PE' ? '▼ BUY PUT' : '— AVOID'}
+            </span>
+            <span className="text-[10px] font-mono text-terminal-dim">
+              Confidence: <span className="text-terminal-text">{ml.confidence != null ? `${(ml.confidence * 100).toFixed(0)}%` : '--'}</span>
+            </span>
+            {ml.status === 'shadow' && (
+              <span className="text-[9px] font-mono text-terminal-dim ml-auto">
+                observing only · rule signal active
+              </span>
+            )}
+          </div>
         </div>
       )}
 

@@ -122,6 +122,49 @@ async def market_status():
 
 
 # --- Full signal for a ticker ---
+async def _ml_shadow(ticker: str, df: pd.DataFrame) -> dict:
+    """
+    Run ML inference in shadow mode — never raises, always returns a dict.
+    Called after the rule-based signal so it never blocks the main response.
+    Returns {} if no model is trained yet.
+    """
+    try:
+        from config.feature_flags import is_enabled
+        from ml.registry import load_model
+        from ml.features import build_features
+        from ml.model import predict as ml_predict
+
+        # Only run for tickers with trained models
+        db_symbol = "NIFTY" if ticker == "NIFTY" else "BANKNIFTY"
+
+        regime_clf = await load_model("regime_classifier", db_symbol, "5m")
+        direction_model = await load_model("direction_model", db_symbol, "5m")
+
+        if regime_clf is None or direction_model is None:
+            return {"status": "no_model", "message": "Run training script first"}
+
+        feat = build_features(df)
+        if feat.empty:
+            return {"status": "no_features"}
+
+        feat["regime"] = regime_clf.predict(df).reindex(feat.index).fillna(2)
+        regime_label = regime_clf.predict_label(df).iloc[-1] if not df.empty else "UNKNOWN"
+
+        direction, confidence = ml_predict(direction_model, feat)
+        dir_map = {1: "BUY_CE", -1: "BUY_PE", 0: "AVOID"}
+
+        return {
+            "status":       "active" if is_enabled("ENABLE_ML_SIGNAL") else "shadow",
+            "direction":    dir_map[direction],
+            "confidence":   round(confidence, 3),
+            "regime":       regime_label,
+        }
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("ML shadow inference failed: %s", exc)
+        return {"status": "error", "message": str(exc)}
+
+
 @router.get("/signal/{ticker}")
 async def get_signal(ticker: str):
     ticker = ticker.upper()
@@ -137,6 +180,7 @@ async def get_signal(ticker: str):
         indic   = compute_indicators(df, pcr=chain["pcr"], iv=iv)
         expiry  = chain.get("expiry", get_next_expiry(ticker).strftime("%d-%b-%Y"))
         signal  = generate_signal(ticker, spot, str(expiry), indic, chain)
+        ml_info = await _ml_shadow(ticker, df)
         return {
             "ticker":     ticker,
             "spot":       spot,
@@ -147,6 +191,7 @@ async def get_signal(ticker: str):
                 "expiry":   expiry,
             },
             "signal": signal,
+            "ml":     ml_info,
         }
     except Exception as e:
         raise HTTPException(500, f"Signal generation failed: {str(e)}")
@@ -425,3 +470,54 @@ async def refresh_ohlcv_endpoint():
         return {"status": "ok", "summary": result["summary"], "errors": result.get("errors", {})}
     except Exception as exc:
         raise HTTPException(500, f"OHLCV refresh failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# ML model status  (Phase 2)
+# ---------------------------------------------------------------------------
+
+@router.get("/ml/status")
+async def ml_status():
+    """
+    Return metadata for the currently active ML models in model_registry.
+    Used by the frontend to show whether models are trained and ready.
+    """
+    from ml.registry import list_models
+    try:
+        rows = await list_models()
+        active = [r for r in rows if r.get("is_active")]
+        return {
+            "models": [
+                {
+                    "name":        r["name"],
+                    "version":     r["version"],
+                    "symbol":      r["symbol"],
+                    "interval":    r["interval"],
+                    "trained_at":  r["trained_at"].isoformat() if r["trained_at"] else None,
+                    "train_start": r["train_start"],
+                    "train_end":   r["train_end"],
+                    "metrics":     r["metrics"] or {},
+                    "is_active":   r["is_active"],
+                }
+                for r in active
+            ],
+            "total_versions": len(rows),
+        }
+    except Exception as exc:
+        raise HTTPException(500, f"ML status failed: {exc}")
+
+
+@router.post("/train")
+async def train_endpoint():
+    """
+    Stub for Vercel — training must run locally.
+    On a long-lived backend (Railway/Render) this would kick off the
+    training script inline.
+    """
+    return {
+        "status": "local_only",
+        "message": (
+            "Model training cannot run on Vercel serverless. "
+            "Run locally: python backend/scripts/train.py"
+        ),
+    }
