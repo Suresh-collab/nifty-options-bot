@@ -8,6 +8,7 @@ const INTERVALS = [
   { label: '1m', value: '1m' },
   { label: '5m', value: '5m' },
   { label: '15m', value: '15m' },
+  { label: '1D', value: '1d' },
 ]
 
 // IST offset: +5:30 = 19800 seconds
@@ -46,7 +47,7 @@ function getVolumeCap(data) {
   return sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1] || 1
 }
 
-export default function LiveChart() {
+export default function LiveChart({ defaultInterval = '5m', compact = false }) {
   const chartRef = useRef(null)
   const rsiChartRef = useRef(null)
   const macdChartRef = useRef(null)
@@ -72,7 +73,12 @@ export default function LiveChart() {
   const volCapRef = useRef(1)
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
-  const [interval, setInterval_] = useState('5m')
+  const [interval, setInterval_] = useState(defaultInterval)
+
+  useEffect(() => {
+    setInterval_(defaultInterval)
+    isFirstLoad.current = true
+  }, [defaultInterval])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
@@ -107,7 +113,7 @@ export default function LiveChart() {
       setIsFullscreen(fs)
       if (chartInstance.current && chartRef.current) {
         const subPanels = (showRSI ? 150 : 0) + (showMACD ? 150 : 0)
-        const mainH = fs ? window.innerHeight - subPanels - 120 : 500
+        const mainH = fs ? window.innerHeight - subPanels - 120 : (compact ? 280 : 500)
         chartInstance.current.applyOptions({
           width: chartRef.current.clientWidth,
           height: mainH,
@@ -157,7 +163,7 @@ export default function LiveChart() {
         barSpacing: 8,
       },
       width: chartRef.current.clientWidth,
-      height: 500,
+      height: compact ? 280 : 500,
     })
 
     const candleSeries = chart.addCandlestickSeries({
@@ -573,7 +579,7 @@ export default function LiveChart() {
 
       if (!candleSeriesRef.current || data.length === 0) return
 
-      data = toIST(data)
+      if (interval !== '1d') data = toIST(data)
 
       // Try NSE real-time data to patch the latest candles (reduces Yahoo delay)
       try {
@@ -626,12 +632,12 @@ export default function LiveChart() {
             const lastTime = data[data.length - 1].time
             // Find start of the last trading day (same UTC day as last candle)
             const lastDayStart = Math.floor(lastTime / 86400) * 86400
-            // Show from start of last trading day to end, with some right padding
-            const candlesPerDay = interval === '1m' ? 375 : interval === '5m' ? 75 : 26
+            const candlesPerDay = interval === '1m' ? 375 : interval === '5m' ? 75 : interval === '15m' ? 26 : 1
             const fromTime = lastDayStart
-            // For 15m, show 2 days for better context
             const daysToShow = interval === '15m' ? 2 : 1
-            const fromIdx = data.findIndex(d => d.time >= fromTime - (daysToShow - 1) * 86400)
+            const fromIdx = interval === '1d'
+              ? Math.max(0, data.length - 90)
+              : data.findIndex(d => d.time >= fromTime - (daysToShow - 1) * 86400)
             if (fromIdx >= 0 && fromIdx < data.length - 5) {
               chartInstance.current.timeScale().setVisibleLogicalRange({
                 from: fromIdx,
@@ -675,7 +681,7 @@ export default function LiveChart() {
     lastDataRef.current = []
     isFirstLoad.current = true
     fetchChart(true)
-    const refreshMs = interval === '1m' ? 5000 : 10000
+    const refreshMs = interval === '1m' ? 5000 : interval === '1d' ? 60000 : 10000
     const iv = window.setInterval(() => fetchChart(false), refreshMs)
     return () => window.clearInterval(iv)
   }, [ticker, interval, fetchChart])
@@ -783,7 +789,7 @@ export default function LiveChart() {
       </div>
 
       {/* ── Signal stats bar ── */}
-      {showSignals && signalStats && (
+      {showSignals && signalStats && !compact && (
         <div className="px-3 py-1 border-b border-[#1e293b]/70 flex items-center gap-3 text-[10px] font-mono shrink-0 bg-[#0f172a] flex-wrap">
           <span className="text-terminal-green font-medium">{signalStats.buys} Buy</span>
           <span className="text-terminal-red font-medium">{signalStats.sells} Sell</span>
@@ -830,7 +836,7 @@ export default function LiveChart() {
       )}
 
       {/* v4: Active trade status bar */}
-      {showSignals && activeTradeInfo && (
+      {showSignals && activeTradeInfo && !compact && (
         <div className={`px-3 py-1.5 border-b flex items-center gap-3 text-[10px] font-mono shrink-0 ${
           activeTradeInfo.direction === 'long'
             ? 'bg-terminal-green/5 border-terminal-green/20'
@@ -934,7 +940,7 @@ export default function LiveChart() {
       )}
 
       {/* ── Legend footer ── */}
-      {(showSignals || showPivots || showEMA) && (
+      {!compact && (showSignals || showPivots || showEMA) && (
         <div className="px-3 py-1.5 border-t border-[#1e293b] shrink-0 bg-[#0f172a]">
           <div className="flex items-center gap-3 text-[10px] font-mono text-[#64748b] flex-wrap">
             {showSignals && (

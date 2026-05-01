@@ -46,7 +46,7 @@ def is_market_open() -> bool:
 
 def _fetch_yahoo_direct(symbol: str, interval: str) -> pd.DataFrame:
     """Direct Yahoo Finance API fetch — fallback when yfinance library is blocked."""
-    range_map = {"1m": "1d", "2m": "5d", "5m": "5d", "15m": "60d"}
+    range_map = {"1m": "1d", "2m": "5d", "5m": "5d", "15m": "60d", "1d": "2y"}
     yf_range = range_map.get(interval, "5d")
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={yf_range}"
 
