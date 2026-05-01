@@ -421,7 +421,7 @@ async def refresh_ohlcv_endpoint():
     """
     from data.ohlcv_loader import refresh_ohlcv
     try:
-        summary = await refresh_ohlcv()
-        return {"status": "ok", "summary": summary}
+        result = await refresh_ohlcv()
+        return {"status": "ok", "summary": result["summary"], "errors": result.get("errors", {})}
     except Exception as exc:
         raise HTTPException(500, f"OHLCV refresh failed: {exc}")

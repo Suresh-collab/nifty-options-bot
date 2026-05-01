@@ -114,7 +114,7 @@ export default function BacktestTab() {
   const [error, setError] = useState(null)
 
   const [seedStatus, setSeedStatus] = useState(null)  // null | 'loading' | 'done' | 'error'
-  const [seedInfo, setSeedInfo] = useState(null)
+  const [seedInfo, setSeedInfo] = useState(null)   // { summary: {}, errors: {} }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -125,10 +125,10 @@ export default function BacktestTab() {
       const res = await fetch('/api/refresh-ohlcv', { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`)
-      setSeedInfo(data.summary)
+      setSeedInfo({ summary: data.summary || {}, errors: data.errors || {} })
       setSeedStatus('done')
     } catch (e) {
-      setSeedInfo(e.message)
+      setSeedInfo({ httpError: e.message })
       setSeedStatus('error')
     }
   }
@@ -181,14 +181,31 @@ export default function BacktestTab() {
             Run this once before backtesting, or after 60 days to refresh.
           </div>
           {seedStatus === 'done' && seedInfo && (
-            <div className="mt-2 text-[10px] font-mono text-green-400 space-y-0.5">
-              {Object.entries(seedInfo).map(([k, v]) => (
-                <div key={k}>{k}: <span className="text-green-300">{v} rows</span></div>
-              ))}
+            <div className="mt-2 space-y-0.5">
+              {Object.entries(seedInfo.summary || {}).map(([k, v]) => {
+                const hasError = seedInfo.errors?.[k]
+                return (
+                  <div key={k} className={`text-[10px] font-mono ${hasError || v === 0 ? 'text-yellow-400' : 'text-green-400'}`}>
+                    {k}: <span className={hasError || v === 0 ? 'text-yellow-300' : 'text-green-300'}>
+                      {v} rows{hasError ? ` — ${seedInfo.errors[k]}` : ''}
+                    </span>
+                  </div>
+                )
+              })}
+              {Object.entries(seedInfo.errors || {})
+                .filter(([k]) => !(k in (seedInfo.summary || {})))
+                .map(([k, msg]) => (
+                  <div key={k} className="text-[10px] font-mono text-red-400">
+                    {k}: <span className="text-red-300">{msg}</span>
+                  </div>
+                ))
+              }
             </div>
           )}
-          {seedStatus === 'error' && (
-            <div className="mt-2 text-[10px] font-mono text-red-400">{seedInfo}</div>
+          {seedStatus === 'error' && seedInfo && (
+            <div className="mt-2 text-[10px] font-mono text-red-400">
+              {seedInfo.httpError || 'Load failed'}
+            </div>
           )}
         </div>
         <button

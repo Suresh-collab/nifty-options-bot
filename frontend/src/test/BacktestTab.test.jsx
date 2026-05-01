@@ -97,4 +97,46 @@ describe('BacktestTab', () => {
       expect(screen.queryByText('symbol must be NIFTY or BANKNIFTY')).toBeTruthy()
     })
   })
+
+  it('shows row counts after Load Market Data succeeds', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'ok',
+        summary: { 'NIFTY/5m': 1234, 'NIFTY/1d': 500 },
+        errors: {},
+      }),
+    }))
+
+    render(<BacktestTab />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Load Market Data'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/1234 rows/)).toBeInTheDocument()
+    })
+  })
+
+  it('shows error detail when Load Market Data returns 0 rows with error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'ok',
+        summary: { 'NIFTY/5m': 0 },
+        errors: { 'NIFTY/5m': 'no data returned by yfinance or direct API' },
+      }),
+    }))
+
+    render(<BacktestTab />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Load Market Data'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/no data returned/)).toBeInTheDocument()
+    })
+  })
 })
