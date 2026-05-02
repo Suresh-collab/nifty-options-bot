@@ -1,0 +1,1 @@
+{"feature_cols": ["volatility", "momentum", "atr_pct"], "label_map": {"2": 0, "1": 1, "0": 2}, "regime_labels": {"0": "TRENDING_UP", "1": "TRENDING_DOWN", "2": "RANGING"}}

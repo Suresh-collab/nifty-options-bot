@@ -123,9 +123,27 @@ async def market_status():
 
 # --- Full signal for a ticker ---
 async def _load_onnx_artifact(name: str, symbol: str, interval: str = "5m"):
-    """Load ONNX bytes + metadata from model_registry_onnx. Returns (bytes, dict) or (None, None)."""
+    """
+    Load ONNX bytes + metadata. Tries disk first (fast, works on Vercel),
+    falls back to Neon DB (for environments without committed model files).
+    Returns (bytes, dict) or (None, None).
+    """
+    import json, os
+    base = os.path.join(os.path.dirname(__file__), "..", "ml", "onnx_models")
+    onnx_path = os.path.join(base, f"{name}_{symbol}.onnx")
+    meta_path  = os.path.join(base, f"{name}_{symbol}.json")
+
+    if os.path.exists(onnx_path):
+        with open(onnx_path, "rb") as f:
+            onnx_bytes = f.read()
+        meta = {}
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+        return onnx_bytes, meta
+
+    # Fallback: load from Neon DB
     try:
-        import json
         from db.base import get_session_factory
         from sqlalchemy import text as _text
         async with get_session_factory()() as session:
