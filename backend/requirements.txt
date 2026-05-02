@@ -17,10 +17,15 @@ asyncpg>=0.29.0
 pydantic-settings>=2.3.0
 python-json-logger>=2.0.7
 
-# --- Phase 2: ML signal layer ---
+# --- Phase 2: ML signal layer (local training only — never on Vercel) ---
 scikit-learn>=1.4.0
 xgboost>=2.0.0
 joblib>=1.3.0
+
+# --- Phase 3: ONNX export (local conversion only) ---
+skl2onnx>=1.16.0
+onnxmltools>=1.12.0
+onnx>=1.15.0
 
 # --- Phase 0: Testing ---
 pytest>=8.2.0

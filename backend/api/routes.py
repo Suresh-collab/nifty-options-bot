@@ -122,51 +122,161 @@ async def market_status():
 
 
 # --- Full signal for a ticker ---
+async def _load_onnx_artifact(name: str, symbol: str, interval: str = "5m"):
+    """Load ONNX bytes + metadata from model_registry_onnx. Returns (bytes, dict) or (None, None)."""
+    try:
+        import json
+        from db.base import get_session_factory
+        from sqlalchemy import text as _text
+        async with get_session_factory()() as session:
+            row = await session.execute(
+                _text(
+                    "SELECT onnx_bytes, input_features FROM model_registry_onnx "
+                    "WHERE name=:name AND symbol=:symbol AND interval=:interval "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"name": name, "symbol": symbol, "interval": interval},
+            )
+            result = row.fetchone()
+        if result is None:
+            return None, None
+        return bytes(result[0]), (json.loads(result[1]) if result[1] else {})
+    except Exception:
+        return None, None
+
+
+def _infer_regime_onnx(ort, np, onnx_bytes: bytes, meta: dict, df: pd.DataFrame):
+    """Regime inference via ONNX — pure numpy, no sklearn. Returns (regime_int, label_str) or None."""
+    c = df.get("c")
+    if c is None or len(c) < 22:
+        return None
+    h, l = df["h"], df["l"]
+    ret = c.pct_change()
+    tr  = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(span=14, adjust=False).mean()
+
+    vol     = float(ret.rolling(20).std().iloc[-1])
+    mom     = float(c.pct_change(5).iloc[-1])
+    last_c  = float(c.iloc[-1])
+    atr_pct = float(atr.iloc[-1]) / last_c if last_c != 0 else 0.0
+
+    if any(pd.isna([vol, mom, atr_pct])):
+        return None
+
+    feats = np.array([[vol, mom, atr_pct]], dtype=np.float32)
+    sess  = ort.InferenceSession(onnx_bytes)
+    raw   = int(sess.run(None, {sess.get_inputs()[0].name: feats})[0][0])
+
+    label_map = {int(k): int(v) for k, v in meta.get("label_map", {}).items()}
+    stable    = label_map.get(raw, 2)
+    labels    = {"0": "TRENDING_UP", "1": "TRENDING_DOWN", "2": "RANGING"}
+    return stable, labels.get(str(stable), "UNKNOWN")
+
+
+def _infer_direction_onnx(ort, np, onnx_bytes: bytes, feat: pd.DataFrame):
+    """Direction inference via ONNX. Returns (direction_int, confidence)."""
+    _FEAT_COLS = [
+        "ret_1", "ret_5", "ret_15", "ret_30", "rsi",
+        "macd_line", "macd_hist", "macd_cross", "supertrend_dir",
+        "bb_pos", "bb_width", "atr_pct", "ema_cross", "vol_ratio",
+        "time_sin", "time_cos", "dow_sin", "dow_cos", "regime",
+    ]
+    row     = feat.iloc[[-1]][[c for c in _FEAT_COLS if c in feat.columns]].values.astype(np.float32)
+    sess    = ort.InferenceSession(onnx_bytes)
+    outputs = sess.run(None, {sess.get_inputs()[0].name: row})
+
+    # Pipeline outputs: [class_labels, probabilities_array]
+    if len(outputs) > 1:
+        probs  = outputs[1][0]
+        prob_up = float(probs[1]) if len(probs) > 1 else float(probs[0])
+    else:
+        prob_up = float(outputs[0][0])
+
+    if prob_up >= 0.55:
+        return 1, prob_up
+    elif prob_up <= 0.45:
+        return -1, 1.0 - prob_up
+    return 0, max(prob_up, 1.0 - prob_up)
+
+
 async def _ml_shadow(ticker: str, df: pd.DataFrame) -> dict:
     """
     Run ML inference in shadow mode — never raises, always returns a dict.
-    Called after the rule-based signal so it never blocks the main response.
-    Returns {} if no model is trained yet.
+    Tries ONNX path first (works on Vercel, onnxruntime ~15 MB).
+    Falls back to sklearn path for local dev (sklearn + xgboost installed).
     """
+    col_map   = {"Open": "o", "High": "h", "Low": "l", "Close": "c", "Volume": "v"}
+    ml_df     = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+    db_symbol = "NIFTY" if ticker in ("NIFTY", "SENSEX") else "BANKNIFTY"
+
+    # ── ONNX PATH (Vercel + local when onnxruntime installed) ──────────────
+    try:
+        import onnxruntime as ort
+        import numpy as np
+
+        dir_bytes,    dir_meta    = await _load_onnx_artifact("direction_model",   db_symbol)
+        regime_bytes, regime_meta = await _load_onnx_artifact("regime_classifier", db_symbol)
+
+        if dir_bytes is not None and regime_bytes is not None:
+            regime_result = _infer_regime_onnx(ort, np, regime_bytes, regime_meta, ml_df)
+            if regime_result is None:
+                return {"status": "no_features"}
+            stable_regime, regime_label = regime_result
+
+            from ml.features import build_features
+            feat = build_features(ml_df)
+            if feat.empty:
+                return {"status": "no_features"}
+            feat["regime"] = stable_regime
+
+            direction, confidence = _infer_direction_onnx(ort, np, dir_bytes, feat)
+            dir_map = {1: "BUY_CE", -1: "BUY_PE", 0: "AVOID"}
+
+            from config.feature_flags import is_enabled
+            return {
+                "status":     "active" if is_enabled("ENABLE_ML_SIGNAL") else "shadow",
+                "source":     "onnx",
+                "direction":  dir_map[direction],
+                "confidence": round(confidence, 3),
+                "regime":     regime_label,
+            }
+        # ONNX models not in DB yet — fall through to sklearn
+    except ImportError:
+        pass  # onnxruntime not installed — fall through to sklearn
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("ONNX inference failed: %s", exc)
+        # fall through to sklearn
+
+    # ── SKLEARN PATH (local dev — sklearn + xgboost installed) ─────────────
     try:
         from config.feature_flags import is_enabled
         from ml.registry import load_model
         from ml.features import build_features
         from ml.model import predict as ml_predict
 
-        # Only run for tickers with trained models
-        db_symbol = "NIFTY" if ticker == "NIFTY" else "BANKNIFTY"
-
-        regime_clf = await load_model("regime_classifier", db_symbol, "5m")
-        direction_model = await load_model("direction_model", db_symbol, "5m")
+        regime_clf      = await load_model("regime_classifier", db_symbol, "5m")
+        direction_model = await load_model("direction_model",   db_symbol, "5m")
 
         if regime_clf is None or direction_model is None:
             return {"status": "no_model", "message": "Run training script first"}
-
-        # get_ohlcv() returns yfinance columns (Open/High/Low/Close/Volume).
-        # build_features() expects lowercase (o/h/l/c/v) as stored in ohlcv_cache.
-        col_map = {"Open": "o", "High": "h", "Low": "l", "Close": "c", "Volume": "v"}
-        ml_df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
         feat = build_features(ml_df)
         if feat.empty:
             return {"status": "no_features"}
 
         feat["regime"] = regime_clf.predict(ml_df).reindex(feat.index).fillna(2)
-        regime_label = regime_clf.predict_label(ml_df).iloc[-1] if not ml_df.empty else "UNKNOWN"
-
+        regime_label   = regime_clf.predict_label(ml_df).iloc[-1] if not ml_df.empty else "UNKNOWN"
         direction, confidence = ml_predict(direction_model, feat)
         dir_map = {1: "BUY_CE", -1: "BUY_PE", 0: "AVOID"}
 
         return {
-            "status":       "active" if is_enabled("ENABLE_ML_SIGNAL") else "shadow",
-            "direction":    dir_map[direction],
-            "confidence":   round(confidence, 3),
-            "regime":       regime_label,
+            "status":     "active" if is_enabled("ENABLE_ML_SIGNAL") else "shadow",
+            "direction":  dir_map[direction],
+            "confidence": round(confidence, 3),
+            "regime":     regime_label,
         }
     except ImportError:
-        # scikit-learn / xgboost not installed in this environment (e.g. Vercel).
-        # Return no_model so the frontend silently skips the ML panel.
         return {"status": "no_model", "message": "ML packages not available in this environment"}
     except Exception as exc:
         import logging

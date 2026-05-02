@@ -12,8 +12,7 @@ asyncpg>=0.29.0
 pydantic-settings>=2.3.0
 python-json-logger>=2.0.7
 
-# Phase 2 — ML packages are NOT included here (Vercel bundle).
-# sklearn + scipy + xgboost = ~287MB unzipped, exceeding Vercel's 250MB limit.
-# These are installed via backend/requirements.txt for local dev and training only.
-# On Vercel, _ml_shadow() catches the ImportError and returns {status: "no_ml"}.
-# Future: convert models to ONNX (onnxruntime ~15MB) to enable Vercel ML inference.
+# Phase 3 — ONNX inference (~15MB, fits Vercel's 50MB limit).
+# sklearn + xgboost (~287MB) stay in backend/requirements.txt for local training only.
+# After running backend/scripts/export_onnx.py, the ML shadow panel works on Vercel.
+onnxruntime>=1.17.0
