@@ -15,3 +15,15 @@ node_modules/
 # IDE
 .vscode/
 .cursor/
+
+# Claude Code session data
+.claude/
+
+# Test coverage artifacts
+.coverage
+coverage/
+frontend/coverage/
+htmlcov/
+
+# Accidental pip install files (e.g. pip install pkg==1.x creates =1.x files)
+backend/=*

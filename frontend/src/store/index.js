@@ -143,4 +143,92 @@ export const useStore = create((set, get) => ({
       set({ tradeHistory: history, tradeStats: stats })
     } catch {}
   },
+
+  // ── Phase 6: Analytics ───────────────────────────────────────────────
+  analyticsData: null,
+  analyticsLoading: false,
+
+  fetchAnalytics: async () => {
+    set({ analyticsLoading: true })
+    try {
+      const res = await fetch('/api/analytics/summary')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      set({ analyticsData: await res.json(), analyticsLoading: false })
+    } catch {
+      set({ analyticsLoading: false })
+    }
+  },
+
+  // ── Phase 6: Scanner ─────────────────────────────────────────────────
+  scannerData: null,
+  scannerLoading: false,
+
+  fetchScannerResults: async () => {
+    set({ scannerLoading: true })
+    try {
+      const res = await fetch('/api/scanner/results')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      set({ scannerData: await res.json(), scannerLoading: false })
+    } catch {
+      set({ scannerLoading: false })
+    }
+  },
+
+  runScanner: async () => {
+    set({ scannerLoading: true })
+    try {
+      const res = await fetch('/api/scanner/run', { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      set({ scannerData: await res.json(), scannerLoading: false })
+    } catch {
+      set({ scannerLoading: false })
+    }
+  },
+
+  // ── Phase 6: Admin ───────────────────────────────────────────────────
+  adminFlags: null,
+  adminFlagsLoading: false,
+  auditLog: null,
+  auditLogLoading: false,
+
+  fetchAdminFlags: async () => {
+    set({ adminFlagsLoading: true })
+    try {
+      const res = await fetch('/api/admin/flags')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      set({ adminFlags: data.flags, adminFlagsLoading: false })
+    } catch {
+      set({ adminFlagsLoading: false })
+    }
+  },
+
+  toggleAdminFlag: async (name, enabled) => {
+    set({ adminFlagsLoading: true })
+    try {
+      await fetch(`/api/admin/flags/${name}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      // Refresh flags after toggle
+      const res = await fetch('/api/admin/flags')
+      const data = await res.json()
+      set({ adminFlags: data.flags, adminFlagsLoading: false })
+    } catch {
+      set({ adminFlagsLoading: false })
+    }
+  },
+
+  fetchAuditLog: async (offset = 0, limit = 20) => {
+    set({ auditLogLoading: true })
+    try {
+      const res = await fetch(`/api/admin/audit-log?limit=${limit}&offset=${offset}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      set({ auditLog: data.entries, auditLogLoading: false })
+    } catch {
+      set({ auditLogLoading: false })
+    }
+  },
 }))

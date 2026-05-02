@@ -12,6 +12,9 @@ import TradeHistory from './components/TradeHistory'
 import LiveChart from './components/LiveChart'
 import MarketNews from './components/MarketNews'
 import BacktestTab from './components/BacktestTab'
+import AnalyticsTab from './components/AnalyticsTab'
+import ScannerTab from './components/ScannerTab'
+import AdminPanel from './components/AdminPanel'
 
 export default function App() {
   const { fetchSignal, fetchMarketStatus, fetchTradeHistory, ticker, signalData } = useStore()
@@ -57,7 +60,7 @@ export default function App() {
             </span>
           </div>
           <div className="flex items-center gap-1">
-            {[['live', 'LIVE'], ['backtest', 'BACKTEST']].map(([id, label]) => (
+            {[['live', 'LIVE'], ['backtest', 'BACKTEST'], ['analytics', 'ANALYTICS'], ['scanner', 'SCANNER'], ['admin', 'ADMIN']].map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
@@ -80,6 +83,11 @@ export default function App() {
       <MarketStatusBar />
 
       <main className="max-w-[1400px] mx-auto px-4 py-4 space-y-4">
+        {/* Phase 6 tabs */}
+        {activeTab === 'analytics' && <AnalyticsTab />}
+        {activeTab === 'scanner'   && <ScannerTab />}
+        {activeTab === 'admin'     && <AdminPanel />}
+
         {/* Backtest tab */}
         {activeTab === 'backtest' && <BacktestTab />}
 

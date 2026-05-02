@@ -82,6 +82,52 @@ def get_history() -> list:
         ).fetchall()
     return [dict(r) for r in rows]
 
+# ---------------------------------------------------------------------------
+# Phase 3 — risk-engine helpers (additive; existing functions unchanged)
+# ---------------------------------------------------------------------------
+
+def get_daily_pnl() -> float:
+    """Sum of P&L for all trades closed today (IST date)."""
+    init_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT pnl FROM trades WHERE status='CLOSED' AND exit_time LIKE ?",
+            (f"{today}%",),
+        ).fetchall()
+    return round(sum(r["pnl"] for r in rows), 2)
+
+
+def get_open_count() -> int:
+    """Number of currently open paper trades."""
+    init_db()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM trades WHERE status='OPEN'"
+        ).fetchone()
+    return int(row["cnt"])
+
+
+def halt_all_open() -> list[dict]:
+    """
+    Mark every OPEN trade as HALTED (kill-switch action).
+    Returns the list of halted trade IDs and tickers.
+    """
+    init_db()
+    halt_time = datetime.now().isoformat()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, ticker, direction FROM trades WHERE status='OPEN'"
+        ).fetchall()
+        if rows:
+            conn.execute(
+                "UPDATE trades SET status='HALTED', exit_time=? WHERE status='OPEN'",
+                (halt_time,),
+            )
+            conn.commit()
+    return [{"trade_id": r["id"], "ticker": r["ticker"], "direction": r["direction"]} for r in rows]
+
+
 def get_stats() -> dict:
     init_db()
     with _get_conn() as conn:

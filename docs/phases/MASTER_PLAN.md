@@ -1,7 +1,47 @@
 # AI Tradebot Upgrade — Master Plan
 
 **Frozen:** 2026-04-21
+**Last status update:** 2026-05-02
 **Goal:** Evolve the existing Nifty options bot into a full AI-driven trading platform without breaking what currently works.
+
+---
+
+## 🟢 ALL 6 PHASES CODE-COMPLETE (as of 2026-05-02)
+
+| Phase | Status | Summary doc |
+|---|---|---|
+| 0 — Foundation Hardening | ✅ Complete | PHASE_0_SUMMARY.md |
+| 1 — Backtesting Engine | ✅ Complete | PHASE_1_SUMMARY.md |
+| 2 — AI/ML Signal Layer | ✅ Complete | PHASE_2_SUMMARY.md |
+| 3 — Risk Management Engine | ✅ Complete | PHASE_3_SUMMARY.md |
+| 4 — Live Broker Integration | ✅ Code complete; ⚠️ Sandbox unverified | PHASE_4_SUMMARY.md |
+| 5 — Real-time & Notifications | ✅ Complete | PHASE_5_SUMMARY.md |
+| 6 — Analytics, Scanner, Admin | ✅ Complete | PHASE_6_SUMMARY.md |
+
+**Current milestone: Production Readiness.** See `docs/AGENT_HANDOFF.md` for the full ordered checklist.
+
+**Summary of what was built across all 6 phases:**
+- Phase 0: PostgreSQL + Alembic (4 migrations), pydantic-settings, JSON logging, feature flags
+- Phase 1: Vectorized backtester, OHLCV Postgres store, Recharts BacktestTab UI
+- Phase 2: XGBoost direction model, KMeans regime classifier, ONNX export for Vercel inference, shadow mode
+- Phase 3: Per-trade SL/TP/trailing, daily cutoff, position sizing (fixed/Kelly), kill-switch, max-positions cap
+- Phase 4: Zerodha Kite Connect adapter, PaperBrokerAdapter, Fernet-encrypted key storage, idempotent orders, audit log
+- Phase 5: WebSocket P&L stream, Telegram alerts, email (aiosmtplib), AlertDedup, APScheduler daily summary
+- Phase 6: Equity curve + drawdown analytics, Nifty-50 market scanner, admin flag toggles + audit log UI, APScheduler wired
+
+**Outstanding before production use (ordered by priority):**
+1. Run full test suite (pytest + vitest) and fix failures
+2. Deploy backend to Render/Railway (Vercel times out on scanner)
+3. Zerodha sandbox end-to-end test
+4. CI green on current main
+5. Migrate paper trades to Postgres for persistent analytics
+6. Persist feature flag overrides to Postgres
+7. Wire ALERT_DEDUP_TTL setting to AlertDedup singleton
+8. Complete .env.example with all Phase 3–6 vars
+
+See `docs/AGENT_HANDOFF.md` → "PRODUCTION READINESS ORDERED CHECKLIST" for full details.
+
+---
 
 ---
 

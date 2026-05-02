@@ -1,7 +1,9 @@
 """
 Feature-flag helper. Import and check flags like:
-    from backend.config import feature_flags
+    from config import feature_flags
     if feature_flags.is_enabled("ENABLE_ML_SIGNAL"): ...
+
+Phase 6 adds set_flag() for in-memory admin-UI overrides (resets on restart).
 """
 from config.settings import get_settings
 
@@ -11,14 +13,27 @@ _FLAG_ATTRS = {
     "ENABLE_AUTO_EXECUTION": "enable_auto_execution",
 }
 
+# In-memory overrides set via admin UI; take precedence over env/settings.
+_overrides: dict = {}
+
 
 def is_enabled(flag: str) -> bool:
-    attr = _FLAG_ATTRS.get(flag.upper())
+    upper = flag.upper()
+    if upper in _overrides:
+        return _overrides[upper]
+    attr = _FLAG_ATTRS.get(upper)
     if attr is None:
         return False
     return bool(getattr(get_settings(), attr, False))
 
 
+def set_flag(flag: str, value: bool) -> None:
+    """Override a flag in-memory (resets on server restart)."""
+    upper = flag.upper()
+    if upper not in _FLAG_ATTRS:
+        raise ValueError(f"Unknown flag '{flag}'")
+    _overrides[upper] = value
+
+
 def all_flags() -> dict:
-    s = get_settings()
-    return {flag: bool(getattr(s, attr)) for flag, attr in _FLAG_ATTRS.items()}
+    return {flag: is_enabled(flag) for flag in _FLAG_ATTRS}
