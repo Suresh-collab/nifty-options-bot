@@ -217,30 +217,34 @@ async def _ml_shadow(ticker: str, df: pd.DataFrame) -> dict:
         dir_bytes,    dir_meta    = await _load_onnx_artifact("direction_model",   db_symbol)
         regime_bytes, regime_meta = await _load_onnx_artifact("regime_classifier", db_symbol)
 
-        if dir_bytes is not None and regime_bytes is not None:
-            regime_result = _infer_regime_onnx(ort, np, regime_bytes, regime_meta, ml_df)
-            if regime_result is None:
-                return {"status": "no_features"}
-            stable_regime, regime_label = regime_result
+        if dir_bytes is None or regime_bytes is None:
+            # onnxruntime is available but ONNX models haven't been exported yet.
+            # Return no_model here — do NOT fall through to sklearn path on Vercel
+            # since sklearn is not installed. Running export_onnx.py locally fixes this.
+            return {"status": "no_model", "message": "Run export_onnx.py to enable ONNX inference"}
 
-            from ml.features import build_features
-            feat = build_features(ml_df)
-            if feat.empty:
-                return {"status": "no_features"}
-            feat["regime"] = stable_regime
+        regime_result = _infer_regime_onnx(ort, np, regime_bytes, regime_meta, ml_df)
+        if regime_result is None:
+            return {"status": "no_features"}
+        stable_regime, regime_label = regime_result
 
-            direction, confidence = _infer_direction_onnx(ort, np, dir_bytes, feat)
-            dir_map = {1: "BUY_CE", -1: "BUY_PE", 0: "AVOID"}
+        from ml.features import build_features
+        feat = build_features(ml_df)
+        if feat.empty:
+            return {"status": "no_features"}
+        feat["regime"] = stable_regime
 
-            from config.feature_flags import is_enabled
-            return {
-                "status":     "active" if is_enabled("ENABLE_ML_SIGNAL") else "shadow",
-                "source":     "onnx",
-                "direction":  dir_map[direction],
-                "confidence": round(confidence, 3),
-                "regime":     regime_label,
-            }
-        # ONNX models not in DB yet — fall through to sklearn
+        direction, confidence = _infer_direction_onnx(ort, np, dir_bytes, feat)
+        dir_map = {1: "BUY_CE", -1: "BUY_PE", 0: "AVOID"}
+
+        from config.feature_flags import is_enabled
+        return {
+            "status":     "active" if is_enabled("ENABLE_ML_SIGNAL") else "shadow",
+            "source":     "onnx",
+            "direction":  dir_map[direction],
+            "confidence": round(confidence, 3),
+            "regime":     regime_label,
+        }
     except ImportError:
         pass  # onnxruntime not installed — fall through to sklearn
     except Exception as exc:
