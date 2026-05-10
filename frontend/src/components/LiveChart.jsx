@@ -99,6 +99,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const lastDataRef = useRef([])
   const volCapRef = useRef(1)
   const syncingCrosshairRef = useRef(false)
+  const syncingTimeRef = useRef(false)
   const rsiDataRef = useRef([])
   const macdDataRef = useRef({ macd: [], signal: [] })
   const isFirstLoad = useRef(true)
@@ -225,6 +226,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       rightPriceScale: {
         borderColor: '#1e293b',
         scaleMargins: { top: 0.05, bottom: 0.22 },
+        minimumWidth: 70,
       },
       timeScale: {
         borderColor: '#1e293b',
@@ -345,6 +347,18 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       }
     })
 
+    // Sync main chart time scale → RSI + MACD (runs once; refs always see current values)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (syncingTimeRef.current || !range) return
+      syncingTimeRef.current = true
+      try {
+        rsiChartInstance.current?.timeScale().setVisibleLogicalRange(range)
+        macdChartInstance.current?.timeScale().setVisibleLogicalRange(range)
+      } finally {
+        syncingTimeRef.current = false
+      }
+    })
+
     const handleResize = () => {
       if (chartRef.current && chartInstance.current) {
         chartInstance.current.applyOptions({
@@ -381,7 +395,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         layout: { background: { color: '#0f172a' }, textColor: '#94a3b8', fontSize: 10, fontFamily: 'monospace' },
         grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
         crosshair: { mode: 0 },
-        rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.1 } },
+        rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.1 }, minimumWidth: 70 },
         timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false, visible: false },
         width: rsiChartRef.current.clientWidth,
         height: 120,
@@ -427,12 +441,21 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       rsiSeriesRef.current = rsiLine
       rsiOverboughtRef.current = { obZone, osZone }
 
-      // Sync time scale scroll
-      if (chartInstance.current) {
-        chartInstance.current.timeScale().subscribeVisibleLogicalRangeChange(range => {
-          if (range && rsiChartInstance.current) rsiChartInstance.current.timeScale().setVisibleLogicalRange(range)
-        })
-      }
+      // Sync initial time range from main chart (fixes misalignment on refresh)
+      const initRange = chartInstance.current?.timeScale().getVisibleLogicalRange()
+      if (initRange) rsiChart.timeScale().setVisibleLogicalRange(initRange)
+
+      // RSI → main + MACD (reverse sync so panning RSI moves main chart too)
+      rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (syncingTimeRef.current || !range) return
+        syncingTimeRef.current = true
+        try {
+          chartInstance.current?.timeScale().setVisibleLogicalRange(range)
+          macdChartInstance.current?.timeScale().setVisibleLogicalRange(range)
+        } finally {
+          syncingTimeRef.current = false
+        }
+      })
 
       // Sync crosshair back to main chart when user hovers RSI panel
       rsiChart.subscribeCrosshairMove(rsiParam => {
@@ -481,7 +504,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         layout: { background: { color: '#0f172a' }, textColor: '#94a3b8', fontSize: 10, fontFamily: 'monospace' },
         grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
         crosshair: { mode: 0 },
-        rightPriceScale: { borderColor: '#1e293b' },
+        rightPriceScale: { borderColor: '#1e293b', minimumWidth: 70 },
         timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false, visible: false },
         width: macdChartRef.current.clientWidth,
         height: 120,
@@ -492,11 +515,21 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
 
       macdChartInstance.current = mc
 
-      if (chartInstance.current) {
-        chartInstance.current.timeScale().subscribeVisibleLogicalRangeChange(range => {
-          if (range && macdChartInstance.current) macdChartInstance.current.timeScale().setVisibleLogicalRange(range)
-        })
-      }
+      // Sync initial time range from main chart (fixes misalignment on refresh)
+      const initRange = chartInstance.current?.timeScale().getVisibleLogicalRange()
+      if (initRange) mc.timeScale().setVisibleLogicalRange(initRange)
+
+      // MACD → main + RSI (reverse sync so panning MACD moves main chart too)
+      mc.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (syncingTimeRef.current || !range) return
+        syncingTimeRef.current = true
+        try {
+          chartInstance.current?.timeScale().setVisibleLogicalRange(range)
+          rsiChartInstance.current?.timeScale().setVisibleLogicalRange(range)
+        } finally {
+          syncingTimeRef.current = false
+        }
+      })
 
       // Sync crosshair back to main chart when user hovers MACD panel
       mc.subscribeCrosshairMove(macdParam => {
