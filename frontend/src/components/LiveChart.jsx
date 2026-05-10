@@ -100,6 +100,17 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const volCapRef = useRef(1)
   const syncingCrosshairRef = useRef(false)
   const syncingTimeRef = useRef(false)
+
+  // After data renders, read the main chart's actual price scale width and apply it
+  // to RSI/MACD so all three plotting areas are pixel-identical → crosshair aligns.
+  const syncPriceScaleWidths = useCallback(() => {
+    if (!chartInstance.current) return
+    const w = chartInstance.current.priceScale('right').width()
+    if (w > 0) {
+      rsiChartInstance.current?.applyOptions({ rightPriceScale: { minimumWidth: w } })
+      macdChartInstance.current?.applyOptions({ rightPriceScale: { minimumWidth: w } })
+    }
+  }, [])
   const rsiDataRef = useRef([])
   const macdDataRef = useRef({ macd: [], signal: [] })
   const isFirstLoad = useRef(true)
@@ -370,6 +381,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           ref.current.applyOptions({ width: chartRef.current?.clientWidth || 0 })
         }
       })
+      requestAnimationFrame(syncPriceScaleWidths)
     }
     window.addEventListener('resize', handleResize)
 
@@ -444,6 +456,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       // Sync initial time range from main chart (fixes misalignment on refresh)
       const initRange = chartInstance.current?.timeScale().getVisibleLogicalRange()
       if (initRange) rsiChart.timeScale().setVisibleLogicalRange(initRange)
+      // Sync price scale widths so crosshair aligns
+      requestAnimationFrame(syncPriceScaleWidths)
 
       // RSI → main + MACD (reverse sync so panning RSI moves main chart too)
       rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
@@ -518,6 +532,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       // Sync initial time range from main chart (fixes misalignment on refresh)
       const initRange = chartInstance.current?.timeScale().getVisibleLogicalRange()
       if (initRange) mc.timeScale().setVisibleLogicalRange(initRange)
+      // Sync price scale widths so crosshair aligns
+      requestAnimationFrame(syncPriceScaleWidths)
 
       // MACD → main + RSI (reverse sync so panning MACD moves main chart too)
       mc.timeScale().subscribeVisibleLogicalRangeChange(range => {
@@ -858,6 +874,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             }
           }
           isFirstLoad.current = false
+          // Sync price scale widths after first render so crosshair aligns across panels
+          requestAnimationFrame(syncPriceScaleWidths)
         }
       } else {
         const lastOldTime = prev.length > 0 ? prev[prev.length - 1].time : 0
@@ -887,7 +905,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     } finally {
       setLoading(false)
     }
-  }, [ticker, interval, applySignals])
+  }, [ticker, interval, applySignals, syncPriceScaleWidths])
 
   useEffect(() => {
     lastDataRef.current = []
