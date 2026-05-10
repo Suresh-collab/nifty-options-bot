@@ -673,8 +673,10 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             color: level.type === 'support' ? '#22c55e80' : '#ef444480',
             lineWidth: 1,
             lineStyle: 2,
-            axisLabelVisible: !compact,           // compact: axis already shows price
-            title: compact ? tag : `${tag} ${level.price.toFixed(0)}`,
+            axisLabelVisible: !compact,
+            // Keep title short — long titles push the main chart's price scale wider
+            // than RSI/MACD, breaking crosshair alignment across panels.
+            title: tag,
           })
           srLinesRef.current.push(priceLine)
         }
@@ -715,7 +717,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           lineWidth: 2,
           lineStyle: 0,
           axisLabelVisible: !compact,
-          title: compact ? `ENTRY ${dir}` : `ENTRY ${dir} ${activeTradeZone.entryPrice.toFixed(2)}`,
+          title: `ENTRY ${dir}`,
         })
         tradeLinesRef.current.push(entryLine)
 
@@ -725,7 +727,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           lineWidth: 2,
           lineStyle: 2,
           axisLabelVisible: !compact,
-          title: compact ? 'SL' : `STOP LOSS ${activeTradeZone.currentSL.toFixed(2)}`,
+          title: compact ? 'SL' : 'STOP LOSS',
         })
         tradeLinesRef.current.push(slLine)
 
@@ -735,7 +737,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           lineWidth: 2,
           lineStyle: 2,
           axisLabelVisible: !compact,
-          title: compact ? 'TP' : `TARGET ${activeTradeZone.currentTarget.toFixed(2)}`,
+          title: compact ? 'TP' : 'TARGET',
         })
         tradeLinesRef.current.push(tpLine)
 
@@ -778,10 +780,13 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         setTradeStats(null)
         setHaTrend(null)
       }
+      // Re-sync price scale widths after every signal update (price lines can change
+      // the main chart's scale width; sub-charts must match or crosshair drifts).
+      setTimeout(syncPriceScaleWidths, 300)
     } catch (e) {
       console.warn('Signal computation error:', e)
     }
-  }, [showSignals, showPivots, showVolume, showEMA, interval, compact, applySubCharts])
+  }, [showSignals, showPivots, showVolume, showEMA, interval, compact, applySubCharts, syncPriceScaleWidths])
 
   const fetchChart = useCallback(async (fullLoad = false) => {
     if (fullLoad) setLoading(true)
