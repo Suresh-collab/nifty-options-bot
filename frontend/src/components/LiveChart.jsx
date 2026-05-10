@@ -196,7 +196,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       setIsFullscreen(fs)
       if (chartInstance.current && chartRef.current) {
         const subPanels = (showRSI ? 150 : 0) + (showMACD ? 150 : 0)
-        const mainH = fs ? window.innerHeight - subPanels - 120 : (compact ? 280 : 500)
+        const mainH = fs ? window.innerHeight - subPanels - 120 : (compact ? 280 : Math.max(400, window.innerHeight - 280))
         chartInstance.current.applyOptions({
           width: chartRef.current.clientWidth,
           height: mainH,
@@ -247,7 +247,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         barSpacing: 8,
       },
       width: chartRef.current.clientWidth,
-      height: compact ? 280 : 500,
+      height: compact ? 280 : Math.max(400, window.innerHeight - 280),
     })
 
     const candleSeries = chart.addCandlestickSeries({
@@ -374,6 +374,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       if (chartRef.current && chartInstance.current) {
         chartInstance.current.applyOptions({
           width: chartRef.current.clientWidth,
+          height: compact ? 280 : Math.max(400, window.innerHeight - 280),
         })
       }
       ;[rsiChartInstance, macdChartInstance].forEach(ref => {
@@ -664,19 +665,26 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       }
       srLinesRef.current = []
 
-      // Draw S/R levels
+      // Draw S/R levels — R1/R2 (nearest→farthest resistance), S1/S2 (nearest→farthest support)
       if (showSignals) {
-        for (const level of levels.slice(0, 4)) {
-          const tag = level.type === 'support' ? 'S' : 'R'
+        const resistances = levels
+          .filter(l => l.type === 'resistance')
+          .sort((a, b) => a.price - b.price)  // ascending: R1 = lowest (nearest above price)
+        const supports = levels
+          .filter(l => l.type === 'support')
+          .sort((a, b) => b.price - a.price)  // descending: S1 = highest (nearest below price)
+        const taggedLevels = [
+          ...resistances.slice(0, 2).map((l, i) => ({ ...l, tag: `R${i + 1}` })),
+          ...supports.slice(0, 2).map((l, i) => ({ ...l, tag: `S${i + 1}` })),
+        ]
+        for (const level of taggedLevels) {
           const priceLine = candleSeriesRef.current.createPriceLine({
             price: level.price,
             color: level.type === 'support' ? '#22c55e80' : '#ef444480',
             lineWidth: 1,
             lineStyle: 2,
             axisLabelVisible: !compact,
-            // Keep title short — long titles push the main chart's price scale wider
-            // than RSI/MACD, breaking crosshair alignment across panels.
-            title: tag,
+            title: level.tag,
           })
           srLinesRef.current.push(priceLine)
         }
