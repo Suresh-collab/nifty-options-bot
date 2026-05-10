@@ -1,10 +1,19 @@
 import { create } from 'zustand'
 import { fetchOHLCV } from '../lib/yahooFetch'
 
+// ── localStorage helpers ───────────────────────────────
+const LS_TICKER = 'nob_ticker'
+function lsGet(key, fallback) {
+  try { return localStorage.getItem(key) ?? fallback } catch { return fallback }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, String(value)) } catch {}
+}
+
 export const useStore = create((set, get) => ({
   // ── Ticker ────────────────────────────────────────────
-  ticker: 'NIFTY',
-  setTicker: (t) => set({ ticker: t, signalData: null, optimizeData: null }),
+  ticker: lsGet(LS_TICKER, 'NIFTY'),
+  setTicker: (t) => { lsSet(LS_TICKER, t); set({ ticker: t, signalData: null, optimizeData: null }) },
 
   // ── Cached OHLCV (shared between chart and signal) ───
   _cachedOHLCV: null,
@@ -142,6 +151,23 @@ export const useStore = create((set, get) => ({
       const stats = await statsRes.json()
       set({ tradeHistory: history, tradeStats: stats })
     } catch {}
+  },
+
+  // ── Daily candle stats ────────────────────────────────────────────────
+  dailyStats: null,
+  dailyStatsLoading: false,
+
+  fetchDailyStats: async () => {
+    const { ticker } = get()
+    set({ dailyStatsLoading: true })
+    try {
+      const res = await fetch(`/api/daily-stats/${ticker}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      set({ dailyStats: Object.keys(data).length > 0 ? data : null, dailyStatsLoading: false })
+    } catch {
+      set({ dailyStatsLoading: false })
+    }
   },
 
   // ── Phase 6: Analytics ───────────────────────────────────────────────

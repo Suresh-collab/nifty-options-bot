@@ -7,7 +7,7 @@ import pandas as pd
 import httpx
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timezone
-from data.market_data import get_ohlcv, get_spot_price, get_market_status, _fetch_nse_chart
+from data.market_data import get_ohlcv, get_spot_price, get_market_status, _fetch_nse_chart, get_daily_candle_stats
 from data.options_chain import fetch_option_chain, get_next_expiry, get_atm_iv, _fallback_chain
 from indicators.engine import compute_indicators
 from ai.signal_engine import generate_signal
@@ -138,6 +138,21 @@ async def get_nse_chart(ticker: str, interval: str = "5m"):
 @router.get("/market-status")
 async def market_status():
     return get_market_status()
+
+
+# --- Daily candle stats (opening candle / first 5m / first 15m / day so far) ---
+@router.get("/daily-stats/{ticker}")
+async def daily_stats(ticker: str):
+    ticker = ticker.upper()
+    if ticker not in ("NIFTY", "SENSEX"):
+        raise HTTPException(400, "ticker must be NIFTY or SENSEX")
+    try:
+        result = get_daily_candle_stats(ticker)
+        if not result:
+            return {}
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Daily stats failed: {str(e)}")
 
 
 # --- Full signal for a ticker ---

@@ -15,11 +15,25 @@ import BacktestTab from './components/BacktestTab'
 import AnalyticsTab from './components/AnalyticsTab'
 import ScannerTab from './components/ScannerTab'
 import AdminPanel from './components/AdminPanel'
+import DailyRangeStats from './components/DailyRangeStats'
 
 export default function App() {
   const { fetchSignal, fetchMarketStatus, fetchTradeHistory, ticker, signalData } = useStore()
-  const [viewMode, setViewMode] = useState('single')
-  const [activeTab, setActiveTab] = useState('live')
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem('nob_viewMode') || 'single' } catch { return 'single' }
+  })
+  const [activeTab, setActiveTab] = useState(() => {
+    try { return localStorage.getItem('nob_activeTab') || 'live' } catch { return 'live' }
+  })
+
+  const handleViewMode = (m) => {
+    try { localStorage.setItem('nob_viewMode', m) } catch {}
+    setViewMode(m)
+  }
+  const handleActiveTab = (id) => {
+    try { localStorage.setItem('nob_activeTab', id) } catch {}
+    setActiveTab(id)
+  }
 
   useEffect(() => {
     fetchSignal()
@@ -63,7 +77,7 @@ export default function App() {
             {[['live', 'LIVE'], ['backtest', 'BACKTEST'], ['analytics', 'ANALYTICS'], ['scanner', 'SCANNER'], ['admin', 'ADMIN']].map(([id, label]) => (
               <button
                 key={id}
-                onClick={() => setActiveTab(id)}
+                onClick={() => handleActiveTab(id)}
                 className={`px-3 py-1.5 text-[10px] font-mono rounded transition-all ${
                   activeTab === id
                     ? 'bg-terminal-blue text-white'
@@ -100,7 +114,7 @@ export default function App() {
             {/* View mode toggle */}
             <div className="flex items-center bg-[#0f172a] border border-[#1e293b] rounded overflow-hidden">
               <button
-                onClick={() => setViewMode('single')}
+                onClick={() => handleViewMode('single')}
                 className={`px-3 py-1.5 text-[11px] font-mono transition-all ${
                   viewMode === 'single'
                     ? 'bg-terminal-blue text-white'
@@ -111,7 +125,7 @@ export default function App() {
                 ⬜ 1
               </button>
               <button
-                onClick={() => setViewMode('grid')}
+                onClick={() => handleViewMode('grid')}
                 className={`px-3 py-1.5 text-[11px] font-mono transition-all border-l border-[#1e293b] ${
                   viewMode === 'grid'
                     ? 'bg-terminal-blue text-white'
@@ -127,6 +141,8 @@ export default function App() {
             For educational purposes only — not financial advice
           </div>
         </div>
+
+        <DailyRangeStats />
 
         {viewMode === 'grid' ? (
           /* ── 4-chart grid: 1m · 5m · 15m · 1D ── */

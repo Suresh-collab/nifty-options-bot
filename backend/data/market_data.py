@@ -216,6 +216,114 @@ def get_ohlcv(ticker: str, interval: str = "5m") -> pd.DataFrame:
     _cache_set(cache_key, df)
     return df
 
+def get_daily_candle_stats(ticker: str) -> dict:
+    """
+    Compute daily range milestones from today's 1m intraday data.
+
+    Returns a dict with four keys:
+      opening_candle  — OHLC of the single 9:15 bar
+      first_5min      — aggregated H/L/O/C for 9:15–9:19 (5 bars)
+      first_15min     — aggregated H/L/O/C for 9:15–9:29 (15 bars)
+      day             — full-session H/L/O/C + change vs prev close
+
+    Returns {} when no intraday data is available (pre-market or data outage).
+    """
+    cache_key = f"daily_stats_{ticker}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    # 1. Try NSE real-time 1m feed (today only, blocks non-Indian IPs gracefully)
+    candles = _fetch_nse_chart(ticker, "1m")
+
+    # 2. Fallback: yfinance 1m, filtered to today
+    if not candles:
+        try:
+            df = get_ohlcv(ticker, "1m")
+            today = datetime.now(IST).date()
+            today_df = df[pd.to_datetime(df.index).tz_localize(None).date == today] \
+                if df.index.tz is None \
+                else df[df.index.tz_convert(IST).date == today]
+            if not today_df.empty:
+                candles = [
+                    {
+                        "time": int(row.Index.timestamp()),
+                        "open": round(float(row.Open), 2),
+                        "high": round(float(row.High), 2),
+                        "low": round(float(row.Low), 2),
+                        "close": round(float(row.Close), 2),
+                        "volume": 0,
+                    }
+                    for row in today_df.itertuples()
+                ]
+        except Exception:
+            pass
+
+    if not candles:
+        return {}
+
+    def _ist_minute(ts: int) -> int:
+        """Minutes since IST midnight for a UTC Unix timestamp."""
+        return ((ts + 19800) % 86400) // 60
+
+    # Market session: 9:15 (minute 555) to 15:30 (minute 930), exclusive of 930
+    session = [c for c in candles if 555 <= _ist_minute(c["time"]) < 930]
+    if not session:
+        return {}
+
+    def _r(v) -> float:
+        return round(float(v), 2)
+
+    def _agg(bars: list) -> dict | None:
+        if not bars:
+            return None
+        return {
+            "open":  _r(bars[0]["open"]),
+            "high":  _r(max(b["high"] for b in bars)),
+            "low":   _r(min(b["low"]  for b in bars)),
+            "close": _r(bars[-1]["close"]),
+        }
+
+    opening_candle = _agg([session[0]])
+    first_5min     = _agg([c for c in session if 555 <= _ist_minute(c["time"]) < 560])
+    first_15min    = _agg([c for c in session if 555 <= _ist_minute(c["time"]) < 570])
+
+    day_open  = _r(session[0]["open"])
+    day_high  = _r(max(c["high"]  for c in session))
+    day_low   = _r(min(c["low"]   for c in session))
+    day_close = _r(session[-1]["close"])
+
+    # Previous close for change calculation
+    prev_close = change_pts = change_pct = None
+    try:
+        df_d = get_ohlcv(ticker, "1d")
+        if len(df_d) >= 2:
+            prev_close  = _r(float(df_d["Close"].iloc[-2]))
+            change_pts  = _r(day_close - prev_close)
+            change_pct  = _r((day_close - prev_close) / prev_close * 100)
+    except Exception:
+        pass
+
+    result = {
+        "ticker": ticker,
+        "opening_candle": opening_candle,
+        "first_5min": first_5min,
+        "first_15min": first_15min,
+        "day": {
+            "open":       day_open,
+            "high":       day_high,
+            "low":        day_low,
+            "close":      day_close,
+            "prev_close": prev_close,
+            "change_pts": change_pts,
+            "change_pct": change_pct,
+        },
+        "candle_count": len(session),
+    }
+    _cache_set(cache_key, result)
+    return result
+
+
 def get_spot_price(ticker: str) -> float:
     """Return the latest closing price for a ticker."""
     df = get_ohlcv(ticker, interval="5m")

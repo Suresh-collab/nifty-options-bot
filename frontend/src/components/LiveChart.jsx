@@ -11,6 +11,18 @@ const INTERVALS = [
   { label: '1D', value: '1d' },
 ]
 
+// ── Chart settings persistence (single-chart mode only) ───────────────────
+const _CS_KEY = 'nob_chartSettings'
+function _csGet(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(_CS_KEY) || '{}')[key] ?? fallback } catch { return fallback }
+}
+function _csSave(key, value) {
+  try {
+    const s = JSON.parse(localStorage.getItem(_CS_KEY) || '{}')
+    localStorage.setItem(_CS_KEY, JSON.stringify({ ...s, [key]: value }))
+  } catch {}
+}
+
 // IST offset: +5:30 = 19800 seconds
 const IST_OFFSET = 19800
 
@@ -88,16 +100,24 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const volCapRef = useRef(1)
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
-  const [interval, setInterval_] = useState(defaultInterval)
-  const [candleType, setCandleType] = useState(defaultCandleType)
-  const candleTypeRef = useRef(defaultCandleType)
+  const [interval, setInterval_] = useState(() =>
+    compact ? defaultInterval : _csGet('interval', defaultInterval)
+  )
+  const [candleType, setCandleType] = useState(() =>
+    compact ? defaultCandleType : _csGet('candleType', defaultCandleType)
+  )
+  const candleTypeRef = useRef(compact ? defaultCandleType : _csGet('candleType', defaultCandleType))
 
   useEffect(() => {
+    // Grid mode only: enforce the hardcoded interval from props
+    if (!compact) return
     setInterval_(defaultInterval)
     isFirstLoad.current = true
   }, [defaultInterval])
 
   useEffect(() => {
+    // Grid mode only: enforce the hardcoded candle type from props
+    if (!compact) return
     setCandleType(defaultCandleType)
     candleTypeRef.current = defaultCandleType
   }, [defaultCandleType])
@@ -108,12 +128,35 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const [error, setError] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
   const [priceChange, setPriceChange] = useState(0)
-  const [showSignals, setShowSignals] = useState(defaultShowSignals)
-  const [showRSI, setShowRSI] = useState(false)
-  const [showMACD, setShowMACD] = useState(false)
-  const [showVolume, setShowVolume] = useState(defaultShowVolume)
-  const [showPivots, setShowPivots] = useState(false)
-  const [showEMA, setShowEMA] = useState(false)
+  const [showSignals, setShowSignals] = useState(() =>
+    compact ? defaultShowSignals : _csGet('showSignals', defaultShowSignals)
+  )
+  const [showRSI, setShowRSI] = useState(() =>
+    compact ? false : _csGet('showRSI', false)
+  )
+  const [showMACD, setShowMACD] = useState(() =>
+    compact ? false : _csGet('showMACD', false)
+  )
+  const [showVolume, setShowVolume] = useState(() =>
+    compact ? defaultShowVolume : _csGet('showVolume', defaultShowVolume)
+  )
+  const [showPivots, setShowPivots] = useState(() =>
+    compact ? false : _csGet('showPivots', false)
+  )
+  const [showEMA, setShowEMA] = useState(() =>
+    compact ? false : _csGet('showEMA', false)
+  )
+
+  // Persist single-chart settings to localStorage whenever they change
+  useEffect(() => { if (!compact) _csSave('interval',     interval)    }, [interval,     compact])
+  useEffect(() => { if (!compact) _csSave('candleType',   candleType)  }, [candleType,   compact])
+  useEffect(() => { if (!compact) _csSave('showSignals',  showSignals) }, [showSignals,  compact])
+  useEffect(() => { if (!compact) _csSave('showRSI',      showRSI)     }, [showRSI,      compact])
+  useEffect(() => { if (!compact) _csSave('showMACD',     showMACD)    }, [showMACD,     compact])
+  useEffect(() => { if (!compact) _csSave('showVolume',   showVolume)  }, [showVolume,   compact])
+  useEffect(() => { if (!compact) _csSave('showPivots',   showPivots)  }, [showPivots,   compact])
+  useEffect(() => { if (!compact) _csSave('showEMA',      showEMA)     }, [showEMA,      compact])
+
   const [signalStats, setSignalStats] = useState(null)
   const [tradeStats, setTradeStats] = useState(null)  // v4: trade performance stats
   const [activeTradeInfo, setActiveTradeInfo] = useState(null)  // v4: current open trade
