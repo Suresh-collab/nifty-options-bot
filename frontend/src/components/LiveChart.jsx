@@ -105,9 +105,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const volCapRef = useRef(1)
   const syncingCrosshairRef = useRef(false)
   const syncingTimeRef = useRef(false)
-  // Grid sync refs: prevent the originating chart from echoing its own broadcast back to itself
+  // Grid crosshair sync ref: prevents the originating chart from echoing its own broadcast
   const lastSentGenerationRef = useRef(-1)
-  const applyingFromGlobalRef = useRef(false)
 
   // Read main chart's actual rendered price scale width and force sub-charts to match.
   // Called via setTimeout so lightweight-charts has finished its layout pass first.
@@ -122,7 +121,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const rsiDataRef = useRef([])
   const macdDataRef = useRef({ macd: [], signal: [] })
   const isFirstLoad = useRef(true)
-  const { ticker, chartTimeRange, setChartTimeRange } = useStore()
+  const { ticker, chartCrosshairTime, setChartCrosshairTime } = useStore()
   const [interval, setInterval_] = useState(() =>
     compact ? defaultInterval : _csGet('interval', defaultInterval)
   )
@@ -180,19 +179,37 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   useEffect(() => { if (!compact) _csSave('showPivots',   showPivots)  }, [showPivots,   compact])
   useEffect(() => { if (!compact) _csSave('showEMA',      showEMA)     }, [showEMA,      compact])
 
-  // Grid time sync: apply an incoming range broadcast from a sibling compact chart.
-  // Skip if this chart was the one that sent the update (matched by generation id).
+  // Grid crosshair sync: apply an incoming cursor timestamp from a sibling compact chart.
+  // Finds the nearest candle to the broadcast wall-clock time and pins the crosshair there.
+  // Skip if this chart originated the broadcast (matched by generation id).
   useEffect(() => {
-    if (!compact || !chartInstance.current || !chartTimeRange) return
-    if (chartTimeRange.gen === lastSentGenerationRef.current) return
-    applyingFromGlobalRef.current = true
-    chartInstance.current.timeScale().setVisibleLogicalRange({
-      from: chartTimeRange.from,
-      to: chartTimeRange.to,
-    })
-    // Clear flag after subscribeVisibleLogicalRangeChange fires synchronously above
-    requestAnimationFrame(() => { applyingFromGlobalRef.current = false })
-  }, [chartTimeRange, compact])
+    if (!compact || !chartInstance.current) return
+    if (!chartCrosshairTime) {
+      chartInstance.current.clearCrosshairPosition?.()
+      setCrosshairData(null)
+      return
+    }
+    if (chartCrosshairTime.gen === lastSentGenerationRef.current) return
+    const data = lastDataRef.current
+    if (!data.length || !candleSeriesRef.current) return
+    // Find nearest candle to the broadcast timestamp (different intervals ≠ exact match)
+    let nearest = data[0]
+    let minDiff = Math.abs(data[0].time - chartCrosshairTime.time)
+    for (let i = 1; i < data.length; i++) {
+      const diff = Math.abs(data[i].time - chartCrosshairTime.time)
+      if (diff < minDiff) { minDiff = diff; nearest = data[i] }
+    }
+    syncingCrosshairRef.current = true
+    try {
+      chartInstance.current.setCrosshairPosition(nearest.close, nearest.time, candleSeriesRef.current)
+      setCrosshairData({
+        open: nearest.open, high: nearest.high, low: nearest.low, close: nearest.close,
+        volume: nearest.volume, isUp: nearest.close >= nearest.open,
+      })
+    } finally {
+      syncingCrosshairRef.current = false
+    }
+  }, [chartCrosshairTime, compact])
 
   const [signalStats, setSignalStats] = useState(null)
   const [tradeStats, setTradeStats] = useState(null)  // v4: trade performance stats
@@ -338,13 +355,15 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     ema20SeriesRef.current = ema20Series
     ema50SeriesRef.current = ema50Series
 
-    // Crosshair hover — show OHLCV + indicator values; sync position to sub-charts
+    // Crosshair hover — show OHLCV + indicator values; sync position to sub-charts.
+    // In grid mode, broadcast the cursor timestamp so sibling charts can sync their vertical line.
     chart.subscribeCrosshairMove(param => {
       if (syncingCrosshairRef.current) return
       if (!param.time || !param.seriesData) {
         setCrosshairData(null)
         rsiChartInstance.current?.clearCrosshairPosition?.()
         macdChartInstance.current?.clearCrosshairPosition?.()
+        if (compact) setChartCrosshairTime(null)
         return
       }
       const candle = param.seriesData.get(candleSeries)
@@ -372,7 +391,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           isUp: candle.close >= candle.open,
         })
       }
-      // Lock crosshair position across indicator panels
+      // Lock crosshair position across indicator panels within this chart instance
       syncingCrosshairRef.current = true
       try {
         if (rsiChartInstance.current && rsiSeriesRef.current && rsiEntry) {
@@ -388,21 +407,23 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       } finally {
         syncingCrosshairRef.current = false
       }
+      // Grid mode: broadcast wall-clock time to sibling compact charts
+      if (compact) {
+        const gen = ++_syncGeneration
+        lastSentGenerationRef.current = gen
+        setChartCrosshairTime({ time: t, gen })
+      }
     })
 
-    // Sync main chart time scale → RSI + MACD (runs once; refs always see current values)
-    // In grid mode also broadcast to sibling compact charts via Zustand.
+    // Sync main chart time scale → RSI + MACD within this chart instance only.
+    // Grid charts intentionally do NOT sync scroll/zoom across timeframes — each interval
+    // has its own time density so sharing logical bar indices produces wrong results.
     chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
       if (syncingTimeRef.current || !range) return
       syncingTimeRef.current = true
       try {
         rsiChartInstance.current?.timeScale().setVisibleLogicalRange(range)
         macdChartInstance.current?.timeScale().setVisibleLogicalRange(range)
-        if (compact && !applyingFromGlobalRef.current) {
-          const gen = ++_syncGeneration
-          lastSentGenerationRef.current = gen
-          setChartTimeRange({ from: range.from, to: range.to, gen })
-        }
       } finally {
         syncingTimeRef.current = false
       }
@@ -907,10 +928,11 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             let fromIdx
             let toIdx = data.length - 1 + 3
             if (compact) {
-              // Grid view: live candle at ~75% from left → 25% right empty space
-              const compactCount = interval === '1m' ? 90 : interval === '5m' ? 35 : interval === '15m' ? 52 : 90
-              const rightPad = Math.round(compactCount * 0.25)
-              fromIdx = Math.max(0, data.length - (compactCount - rightPad))
+              // Grid view: always show last 25 candles with 8-bar right pad (≈ 33 bars wide).
+              // Fixed count regardless of interval so all four quadrants look consistent.
+              const compactCount = 25
+              const rightPad = 8
+              fromIdx = Math.max(0, data.length - compactCount)
               toIdx = data.length - 1 + rightPad
             } else {
               // Single view: show last 1 trading day (2 days for 15m)

@@ -283,9 +283,10 @@ export const useStore = create((set, get) => ({
     }
   },
 
-  // ── Grid chart time sync ──────────────────────────────────────────────
-  // Shared visible range for all compact (grid) charts.
-  // { from, to, gen } — gen prevents the originating chart from echoing its own update.
-  chartTimeRange: null,
-  setChartTimeRange: (range) => set({ chartTimeRange: range }),
+  // ── Grid crosshair time sync ─────────────────────────────────────────
+  // When hovering any compact (grid) chart, broadcast the cursor timestamp so
+  // sibling charts can show a vertical line at the same wall-clock time.
+  // { time, gen } — gen prevents the originating chart from echoing its own update.
+  chartCrosshairTime: null,
+  setChartCrosshairTime: (t) => set({ chartCrosshairTime: t }),
 }))
