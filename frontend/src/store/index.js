@@ -289,4 +289,26 @@ export const useStore = create((set, get) => ({
   // { time, gen } — gen prevents the originating chart from echoing its own update.
   chartCrosshairTime: null,
   setChartCrosshairTime: (t) => set({ chartCrosshairTime: t }),
+
+  // ── Grid snapshot — per-interval OHLCV + ST at the current cursor time ─
+  // Each compact LiveChart writes its own entry keyed by interval ('1m' etc.).
+  // _live: true  → last-bar data (always present after first chart load)
+  // _live: false → cursor-hover data (overrides live while mouse is on chart)
+  gridSnapshot: {},
+  setGridSnapshot: (interval, snap) => set(state => ({
+    gridSnapshot: { ...state.gridSnapshot, [interval]: snap },
+  })),
+
+  // ── Grid bookmarks — pinned timestamps shown on all compact charts ────
+  // Toggled by clicking on any compact chart. Max 10 pins.
+  gridBookmarks: [],
+  toggleGridBookmark: (time) => set(state => {
+    const TOLERANCE = 120  // 2-minute window for "same bookmark" matching
+    const idx = state.gridBookmarks.findIndex(b => Math.abs(b.time - time) < TOLERANCE)
+    if (idx >= 0) {
+      return { gridBookmarks: state.gridBookmarks.filter((_, i) => i !== idx) }
+    }
+    if (state.gridBookmarks.length >= 10) return {}
+    return { gridBookmarks: [...state.gridBookmarks, { time, id: `bm_${Date.now()}` }] }
+  }),
 }))

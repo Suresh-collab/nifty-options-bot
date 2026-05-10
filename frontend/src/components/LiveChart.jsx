@@ -107,6 +107,14 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const syncingTimeRef = useRef(false)
   // Grid crosshair sync ref: prevents the originating chart from echoing its own broadcast
   const lastSentGenerationRef = useRef(-1)
+  // Signal markers cache — merged with bookmark markers before every setMarkers() call
+  const signalMarkersRef = useRef([])
+  // Mirrors the store's gridBookmarks so chart-creation closures can read current value
+  const gridBookmarksRef = useRef([])
+  // Stores the SuperTrend line data for timestamp lookup in crosshair sync handler
+  const stDataRef = useRef([])
+  // Last-bar snapshot for restoring confluence strip after cursor leaves
+  const liveSnapRef = useRef(null)
 
   // Read main chart's actual rendered price scale width and force sub-charts to match.
   // Called via setTimeout so lightweight-charts has finished its layout pass first.
@@ -121,7 +129,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const rsiDataRef = useRef([])
   const macdDataRef = useRef({ macd: [], signal: [] })
   const isFirstLoad = useRef(true)
-  const { ticker, chartCrosshairTime, setChartCrosshairTime } = useStore()
+  const { ticker, chartCrosshairTime, setChartCrosshairTime,
+          setGridSnapshot, gridBookmarks, toggleGridBookmark } = useStore()
   const [interval, setInterval_] = useState(() =>
     compact ? defaultInterval : _csGet('interval', defaultInterval)
   )
@@ -179,14 +188,35 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   useEffect(() => { if (!compact) _csSave('showPivots',   showPivots)  }, [showPivots,   compact])
   useEffect(() => { if (!compact) _csSave('showEMA',      showEMA)     }, [showEMA,      compact])
 
+  // Keep the bookmarks ref in sync so chart-creation closures always read current bookmarks
+  useEffect(() => { gridBookmarksRef.current = gridBookmarks }, [gridBookmarks])
+
+  // Reapply markers when bookmarks change (compact charts only)
+  useEffect(() => {
+    if (!compact || !candleSeriesRef.current || !lastDataRef.current.length) return
+    const data = lastDataRef.current
+    const bmMarkers = gridBookmarksRef.current.flatMap(bm => {
+      const nearest = data.reduce((p, c) =>
+        Math.abs(c.time - bm.time) < Math.abs(p.time - bm.time) ? c : p, data[0])
+      return nearest
+        ? [{ time: nearest.time, position: 'aboveBar', color: '#f59e0b', shape: 'arrowDown', size: 1.5 }]
+        : []
+    })
+    const all = [...signalMarkersRef.current, ...bmMarkers].sort((a, b) => a.time - b.time)
+    candleSeriesRef.current.setMarkers(all)
+  }, [gridBookmarks, compact])
+
   // Grid crosshair sync: apply an incoming cursor timestamp from a sibling compact chart.
   // Finds the nearest candle to the broadcast wall-clock time and pins the crosshair there.
+  // Also writes to gridSnapshot so the confluence panel has data for all 4 timeframes.
   // Skip if this chart originated the broadcast (matched by generation id).
   useEffect(() => {
     if (!compact || !chartInstance.current) return
     if (!chartCrosshairTime) {
       chartInstance.current.clearCrosshairPosition?.()
       setCrosshairData(null)
+      // Restore live snapshot when cursor leaves
+      if (liveSnapRef.current) setGridSnapshot(interval, liveSnapRef.current)
       return
     }
     if (chartCrosshairTime.gen === lastSentGenerationRef.current) return
@@ -199,12 +229,25 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       const diff = Math.abs(data[i].time - chartCrosshairTime.time)
       if (diff < minDiff) { minDiff = diff; nearest = data[i] }
     }
+    // Look up the SuperTrend value at (or nearest to) the crosshair time
+    const stEntry = stDataRef.current.length
+      ? stDataRef.current.reduce((p, c) =>
+          Math.abs(c.time - chartCrosshairTime.time) < Math.abs(p.time - chartCrosshairTime.time) ? c : p,
+          stDataRef.current[0])
+      : null
     syncingCrosshairRef.current = true
     try {
       chartInstance.current.setCrosshairPosition(nearest.close, nearest.time, candleSeriesRef.current)
       setCrosshairData({
         open: nearest.open, high: nearest.high, low: nearest.low, close: nearest.close,
         volume: nearest.volume, isUp: nearest.close >= nearest.open,
+      })
+      setGridSnapshot(interval, {
+        time: nearest.time,
+        open: nearest.open, high: nearest.high, low: nearest.low, close: nearest.close,
+        volume: nearest.volume,
+        st: stEntry?.value ?? null,
+        _live: false,
       })
     } finally {
       syncingCrosshairRef.current = false
@@ -363,7 +406,11 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         setCrosshairData(null)
         rsiChartInstance.current?.clearCrosshairPosition?.()
         macdChartInstance.current?.clearCrosshairPosition?.()
-        if (compact) setChartCrosshairTime(null)
+        if (compact) {
+          setChartCrosshairTime(null)
+          // Restore live-bar snapshot when cursor leaves this chart
+          if (liveSnapRef.current) setGridSnapshot(interval, liveSnapRef.current)
+        }
         return
       }
       const candle = param.seriesData.get(candleSeries)
@@ -407,13 +454,30 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       } finally {
         syncingCrosshairRef.current = false
       }
-      // Grid mode: broadcast wall-clock time to sibling compact charts
+      // Grid mode: broadcast wall-clock time + own OHLCV+ST snapshot
       if (compact) {
         const gen = ++_syncGeneration
         lastSentGenerationRef.current = gen
         setChartCrosshairTime({ time: t, gen })
+        // Write this chart's own snapshot (originating chart)
+        if (candle) {
+          setGridSnapshot(interval, {
+            time: t,
+            open: candle.open, high: candle.high, low: candle.low, close: candle.close,
+            volume: vol?.value ?? null,
+            st: st?.value ?? null,
+            _live: false,
+          })
+        }
       }
     })
+
+    // Compact mode: click toggles a time bookmark shared across all grid charts
+    if (compact) {
+      chart.subscribeClick(param => {
+        if (param.time) toggleGridBookmark(param.time)
+      })
+    }
 
     // Sync main chart time scale → RSI + MACD within this chart instance only.
     // Grid charts intentionally do NOT sync scroll/zoom across timeframes — each interval
@@ -463,6 +527,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       srLinesRef.current = []
       pivotLinesRef.current = []
       tradeLinesRef.current = []
+      // Clear this chart's contribution to the confluence panel on unmount
+      if (compact) setGridSnapshot(interval, null)
     }
   }, [])
 
@@ -702,15 +768,48 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     try {
       const { markers, levels, trendLine, pivots, ema20Line, ema50Line, activeTradeZone, tradeStats: ts, tradeHistory, haTrendStatus: haStatus } = computeChartSignals(data, interval)
 
-      // Signals (markers + trend line)
+      // Cache SuperTrend line data for crosshair sync lookups (used by sibling charts)
+      stDataRef.current = trendLine.map(p => ({ time: p.time, value: p.value }))
+
+      // Broadcast live-bar snapshot so the confluence panel always shows current trend
+      if (compact && data.length > 0) {
+        const lastBar = data[data.length - 1]
+        const stEntry = stDataRef.current.length
+          ? stDataRef.current[stDataRef.current.length - 1]
+          : null
+        const snap = {
+          time: lastBar.time,
+          open: lastBar.open, high: lastBar.high, low: lastBar.low, close: lastBar.close,
+          volume: lastBar.volume ?? null,
+          st: stEntry?.value ?? null,
+          _live: true,
+        }
+        liveSnapRef.current = snap
+        setGridSnapshot(interval, snap)
+      }
+
+      // Signals (markers + trend line).
+      // Bookmark pin markers are merged in so a single setMarkers() call handles both.
+      const sigMarkers = showSignals ? markers : []
+      signalMarkersRef.current = sigMarkers
+      {
+        const d = lastDataRef.current
+        const bmMarkers = compact ? gridBookmarksRef.current.flatMap(bm => {
+          if (!d.length) return []
+          const nearest = d.reduce((p, c) =>
+            Math.abs(c.time - bm.time) < Math.abs(p.time - bm.time) ? c : p, d[0])
+          return [{ time: nearest.time, position: 'aboveBar', color: '#f59e0b', shape: 'arrowDown', size: 1.5 }]
+        }) : []
+        candleSeriesRef.current.setMarkers(
+          [...sigMarkers, ...bmMarkers].sort((a, b) => a.time - b.time)
+        )
+      }
       if (showSignals) {
-        candleSeriesRef.current.setMarkers(markers)
         if (stLineSeriesRef.current && trendLine.length > 0) {
           stLineSeriesRef.current.setData(trendLine.map(p => ({ time: p.time, value: p.value, color: p.color })))
           stLineSeriesRef.current.applyOptions({ visible: true })
         }
       } else {
-        candleSeriesRef.current.setMarkers([])
         if (stLineSeriesRef.current) stLineSeriesRef.current.applyOptions({ visible: false })
       }
 

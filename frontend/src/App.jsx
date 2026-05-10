@@ -16,6 +16,7 @@ import AnalyticsTab from './components/AnalyticsTab'
 import ScannerTab from './components/ScannerTab'
 import AdminPanel from './components/AdminPanel'
 import DailyRangeStats from './components/DailyRangeStats'
+import GridSyncPanel from './components/GridSyncPanel'
 
 export default function App() {
   const { fetchSignal, fetchMarketStatus, fetchTradeHistory, ticker, signalData } = useStore()
@@ -146,6 +147,8 @@ export default function App() {
 
         {viewMode === 'grid' ? (
           /* ── 4-chart grid: 1m · 5m · 15m · 1D ── */
+          <>
+          <GridSyncPanel />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
               { label: '1 MIN',  interval: '1m',  candleType: 'candle', signals: true,  volume: true  },
@@ -167,6 +170,7 @@ export default function App() {
               </div>
             ))}
           </div>
+          </>
         ) : (
           /* ── Single chart: original layout ── */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
