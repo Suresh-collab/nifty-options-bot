@@ -371,18 +371,21 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     })
 
     const handleResize = () => {
-      if (chartRef.current && chartInstance.current) {
-        chartInstance.current.applyOptions({
-          width: chartRef.current.clientWidth,
-          height: compact ? 280 : Math.max(400, window.innerHeight - 280),
-        })
-      }
-      ;[rsiChartInstance, macdChartInstance].forEach(ref => {
-        if (ref.current) {
-          ref.current.applyOptions({ width: chartRef.current?.clientWidth || 0 })
+      // rAF ensures CSS grid reflow finishes before we read clientWidth
+      requestAnimationFrame(() => {
+        if (chartRef.current && chartInstance.current) {
+          chartInstance.current.applyOptions({
+            width: chartRef.current.clientWidth,
+            height: compact ? 280 : Math.max(400, window.innerHeight - 280),
+          })
         }
+        ;[rsiChartInstance, macdChartInstance].forEach(ref => {
+          if (ref.current) {
+            ref.current.applyOptions({ width: chartRef.current?.clientWidth || 0 })
+          }
+        })
+        setTimeout(syncPriceScaleWidths, 150)
       })
-      setTimeout(syncPriceScaleWidths, 150)
     }
     window.addEventListener('resize', handleResize)
 

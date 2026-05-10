@@ -63,7 +63,7 @@ export default function App() {
 
       {/* Top nav */}
       <header className="bg-[#0f172a] border-b border-[#1e293b]">
-        <div className="max-w-[1400px] mx-auto px-4 py-2.5 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-4 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 rounded bg-terminal-blue/20 border border-terminal-blue flex items-center justify-center">
               <span className="text-terminal-blue text-xs font-mono font-bold">N</span>
@@ -96,7 +96,7 @@ export default function App() {
 
       <MarketStatusBar />
 
-      <main className="max-w-[1400px] mx-auto px-4 py-4 space-y-4">
+      <main className="max-w-[1600px] mx-auto px-4 py-4 space-y-4">
         {/* Phase 6 tabs */}
         {activeTab === 'analytics' && <AnalyticsTab />}
         {activeTab === 'scanner'   && <ScannerTab />}
@@ -170,8 +170,8 @@ export default function App() {
         ) : (
           /* ── Single chart: original layout ── */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Left col: chart + signal (8 cols) */}
-            <div className="lg:col-span-8 space-y-4">
+            {/* Left col: chart + signal (9 cols) */}
+            <div className="lg:col-span-9 space-y-4">
               <LiveChart />
               <SignalCard />
               <div>
@@ -182,8 +182,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right col: news → optimizer → option chart (4 cols) */}
-            <div className="lg:col-span-4 space-y-4 lg:sticky lg:top-4 lg:self-start">
+            {/* Right col: news → optimizer → option chart (3 cols) */}
+            <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-4 lg:self-start">
               <MarketNews />
               <BudgetOptimizer />
               <OptionChart ticker={ticker} expiry={expiry} />
