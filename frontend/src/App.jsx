@@ -18,6 +18,13 @@ import AdminPanel from './components/AdminPanel'
 import DailyRangeStats from './components/DailyRangeStats'
 import GridSyncPanel from './components/GridSyncPanel'
 
+const GRID_CONFIGS = [
+  { label: '1 MIN',  interval: '1m',  candleType: 'candle', signals: true,  volume: true  },
+  { label: '5 MIN',  interval: '5m',  candleType: 'ha',     signals: true,  volume: true  },
+  { label: '15 MIN', interval: '15m', candleType: 'ha',     signals: true,  volume: false },
+  { label: 'DAILY',  interval: '1d',  candleType: 'ha',     signals: false, volume: false },
+]
+
 export default function App() {
   const { fetchSignal, fetchMarketStatus, fetchTradeHistory, ticker, signalData } = useStore()
   const [viewMode, setViewMode] = useState(() => {
@@ -26,10 +33,12 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => {
     try { return localStorage.getItem('nob_activeTab') || 'live' } catch { return 'live' }
   })
+  const [expandedInterval, setExpandedInterval] = useState(null)
 
   const handleViewMode = (m) => {
     try { localStorage.setItem('nob_viewMode', m) } catch {}
     setViewMode(m)
+    setExpandedInterval(null)
   }
   const handleActiveTab = (id) => {
     try { localStorage.setItem('nob_activeTab', id) } catch {}
@@ -147,18 +156,58 @@ export default function App() {
 
         {viewMode === 'grid' ? (
           /* ── 4-chart grid: 1m · 5m · 15m · 1D ── */
+          expandedInterval ? (() => {
+            /* ── Expanded single chart (click-to-expand from grid) ── */
+            const cfg = GRID_CONFIGS.find(c => c.interval === expandedInterval)
+            return (
+              <div className="space-y-3">
+                {/* Back bar */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setExpandedInterval(null)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono text-[#94a3b8] bg-[#0f172a] border border-[#1e293b] rounded hover:text-white hover:border-[#334155] transition-all"
+                  >
+                    ← Grid
+                  </button>
+                  <span className="text-[11px] font-mono text-[#475569] uppercase tracking-widest">
+                    {cfg.label}
+                  </span>
+                  <span className="text-[10px] font-mono text-[#334155]">— expanded view · click ← Grid to return</span>
+                </div>
+                {/* Expanded layout: chart + signal card */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  <div className="lg:col-span-9">
+                    <LiveChart
+                      key={expandedInterval}
+                      defaultInterval={cfg.interval}
+                      compact={false}
+                      defaultCandleType={cfg.candleType}
+                      defaultShowSignals={cfg.signals}
+                      defaultShowVolume={cfg.volume}
+                      defaultShowRSI={true}
+                      defaultShowMACD={true}
+                    />
+                  </div>
+                  <div className="lg:col-span-3 space-y-4">
+                    <SignalCard />
+                  </div>
+                </div>
+              </div>
+            )
+          })() : (
           <>
           <GridSyncPanel />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[
-              { label: '1 MIN',  interval: '1m',  candleType: 'candle', signals: true,  volume: true  },
-              { label: '5 MIN',  interval: '5m',  candleType: 'ha',     signals: true,  volume: true  },
-              { label: '15 MIN', interval: '15m', candleType: 'ha',     signals: true,  volume: false },
-              { label: 'DAILY',  interval: '1d',  candleType: 'ha',     signals: false, volume: false },
-            ].map(({ label, interval, candleType, signals, volume }) => (
-              <div key={interval}>
-                <div className="text-[10px] font-mono text-[#475569] uppercase tracking-widest mb-1 px-1">
-                  {label}
+            {GRID_CONFIGS.map(({ label, interval, candleType, signals, volume }) => (
+              <div key={interval} className="group">
+                {/* Clickable label row — expands on click */}
+                <div
+                  className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest mb-1 px-1 cursor-pointer text-[#475569] hover:text-[#94a3b8] transition-colors select-none"
+                  onClick={() => setExpandedInterval(interval)}
+                  title={`Expand ${label} chart`}
+                >
+                  <span>{label}</span>
+                  <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px]" title="Expand">⤢</span>
                 </div>
                 <LiveChart
                   defaultInterval={interval}
@@ -171,6 +220,7 @@ export default function App() {
             ))}
           </div>
           </>
+          )
         ) : (
           /* ── Single chart: original layout ── */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

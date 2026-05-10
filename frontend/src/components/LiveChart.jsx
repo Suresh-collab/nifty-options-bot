@@ -79,7 +79,7 @@ function getVolumeCap(data) {
   return sorted[Math.floor(sorted.length * 0.95)] || sorted[sorted.length - 1] || 1
 }
 
-export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle', defaultShowSignals = true, defaultShowVolume = true }) {
+export default function LiveChart({ defaultInterval = '5m', compact = false, defaultCandleType = 'candle', defaultShowSignals = true, defaultShowVolume = true, defaultShowRSI = false, defaultShowMACD = false }) {
   const chartRef = useRef(null)
   const rsiChartRef = useRef(null)
   const macdChartRef = useRef(null)
@@ -163,10 +163,10 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     compact ? defaultShowSignals : _csGet('showSignals', defaultShowSignals)
   )
   const [showRSI, setShowRSI] = useState(() =>
-    compact ? false : _csGet('showRSI', false)
+    compact ? false : _csGet('showRSI', defaultShowRSI)
   )
   const [showMACD, setShowMACD] = useState(() =>
-    compact ? false : _csGet('showMACD', false)
+    compact ? false : _csGet('showMACD', defaultShowMACD)
   )
   const [showVolume, setShowVolume] = useState(() =>
     compact ? defaultShowVolume : _csGet('showVolume', defaultShowVolume)
@@ -1303,38 +1303,38 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       )}
 
       {/* ── Crosshair OHLCV data bar (TradingView style) ── */}
-      <div className="px-3 py-0.5 flex items-center gap-2 text-[10px] font-mono shrink-0 bg-[#0f172a] min-h-[20px]">
+      <div className="px-3 py-1 flex items-center gap-2 text-[12px] font-mono shrink-0 bg-[#0f172a] min-h-[24px]">
         {crosshairData ? (
           <>
-            <span className="text-[#64748b]">O</span>
-            <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.open?.toFixed(2)}</span>
-            <span className="text-[#64748b]">H</span>
-            <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.high?.toFixed(2)}</span>
-            <span className="text-[#64748b]">L</span>
-            <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.low?.toFixed(2)}</span>
-            <span className="text-[#64748b]">C</span>
-            <span className={crosshairData.isUp ? 'text-terminal-green' : 'text-terminal-red'}>{crosshairData.close?.toFixed(2)}</span>
+            <span className="text-[#94a3b8] font-semibold">O</span>
+            <span className={crosshairData.isUp ? 'text-terminal-green font-medium' : 'text-terminal-red font-medium'}>{crosshairData.open?.toFixed(2)}</span>
+            <span className="text-[#94a3b8] font-semibold">H</span>
+            <span className={crosshairData.isUp ? 'text-terminal-green font-medium' : 'text-terminal-red font-medium'}>{crosshairData.high?.toFixed(2)}</span>
+            <span className="text-[#94a3b8] font-semibold">L</span>
+            <span className={crosshairData.isUp ? 'text-terminal-green font-medium' : 'text-terminal-red font-medium'}>{crosshairData.low?.toFixed(2)}</span>
+            <span className="text-[#94a3b8] font-semibold">C</span>
+            <span className={crosshairData.isUp ? 'text-terminal-green font-medium' : 'text-terminal-red font-medium'}>{crosshairData.close?.toFixed(2)}</span>
             {crosshairData.volume != null && (
-              <><span className="text-[#64748b] ml-1">Vol</span><span className="text-[#94a3b8]">{Number(crosshairData.volume).toLocaleString('en-IN')}</span></>
+              <><span className="text-[#94a3b8] ml-1 font-semibold">Vol</span><span className="text-[#cbd5e1]">{Number(crosshairData.volume).toLocaleString('en-IN')}</span></>
             )}
             {crosshairData.supertrend != null && showSignals && (
-              <><span className="text-[#475569] ml-1">|</span><span className="text-[#64748b]">ST</span><span className="text-[#94a3b8]">{crosshairData.supertrend.toFixed(2)}</span></>
+              <><span className="text-[#64748b] ml-1">|</span><span className="text-[#94a3b8] font-semibold">ST</span><span className="text-[#cbd5e1]">{crosshairData.supertrend.toFixed(2)}</span></>
             )}
             {crosshairData.ema20 != null && showEMA && (
-              <><span className="text-[#475569]">|</span><span className="text-amber-400">E20</span><span className="text-[#94a3b8]">{crosshairData.ema20.toFixed(2)}</span></>
+              <><span className="text-[#64748b]">|</span><span className="text-amber-400 font-semibold">E20</span><span className="text-[#cbd5e1]">{crosshairData.ema20.toFixed(2)}</span></>
             )}
             {crosshairData.ema50 != null && showEMA && (
-              <><span className="text-purple-400">E50</span><span className="text-[#94a3b8]">{crosshairData.ema50.toFixed(2)}</span></>
+              <><span className="text-purple-400 font-semibold">E50</span><span className="text-[#cbd5e1]">{crosshairData.ema50.toFixed(2)}</span></>
             )}
             {crosshairData.rsi != null && showRSI && (
-              <><span className="text-[#475569]">|</span><span className="text-purple-400">RSI</span><span className={crosshairData.rsi > 70 ? 'text-terminal-red font-bold' : crosshairData.rsi < 40 ? 'text-terminal-green font-bold' : 'text-[#94a3b8]'}>{crosshairData.rsi.toFixed(1)}</span></>
+              <><span className="text-[#64748b]">|</span><span className="text-purple-400 font-semibold">RSI</span><span className={crosshairData.rsi > 70 ? 'text-terminal-red font-bold' : crosshairData.rsi < 40 ? 'text-terminal-green font-bold' : 'text-[#cbd5e1]'}>{crosshairData.rsi.toFixed(1)}</span></>
             )}
             {crosshairData.macd != null && showMACD && (
-              <><span className="text-[#475569]">|</span><span className="text-blue-400">MACD</span><span className="text-[#94a3b8]">{crosshairData.macd.toFixed(2)}</span><span className="text-[#475569] mx-0.5">/</span><span className="text-orange-400">Sig</span><span className="text-[#94a3b8]">{crosshairData.macdSignal?.toFixed(2)}</span></>
+              <><span className="text-[#64748b]">|</span><span className="text-blue-400 font-semibold">MACD</span><span className="text-[#cbd5e1]">{crosshairData.macd.toFixed(2)}</span><span className="text-[#64748b] mx-0.5">/</span><span className="text-orange-400 font-semibold">Sig</span><span className="text-[#cbd5e1]">{crosshairData.macdSignal?.toFixed(2)}</span></>
             )}
           </>
         ) : (
-          <span className="text-[#475569]">Hover over chart for details</span>
+          <span className="text-[#64748b]">Hover over chart for details</span>
         )}
       </div>
 
@@ -1344,15 +1344,15 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       {/* ── RSI sub-chart ── */}
       {showRSI && (
         <div className="border-t border-[#1e293b]">
-          <div className="px-3 py-0.5 flex items-center gap-2 text-[10px] font-mono bg-[#0f172a]">
-            <span className="text-purple-400 font-medium">RSI (14)</span>
-            <span className="text-[#475569]">|</span>
-            <span className="text-terminal-red">OB 70</span>
-            <span className="text-[#64748b]">50</span>
-            <span className="text-terminal-green">OS 40</span>
+          <div className="px-3 py-1 flex items-center gap-2 text-[11px] font-mono bg-[#0f172a]">
+            <span className="text-purple-400 font-semibold">RSI (14)</span>
+            <span className="text-[#64748b]">|</span>
+            <span className="text-terminal-red font-medium">OB 70</span>
+            <span className="text-[#94a3b8]">50</span>
+            <span className="text-terminal-green font-medium">OS 40</span>
             {crosshairData?.rsi != null && (
               <>
-                <span className="text-[#475569]">|</span>
+                <span className="text-[#64748b]">|</span>
                 <span className={`font-bold ${crosshairData.rsi > 70 ? 'text-terminal-red' : crosshairData.rsi < 40 ? 'text-terminal-green' : 'text-purple-300'}`}>
                   RSI {crosshairData.rsi.toFixed(1)}
                 </span>
@@ -1366,18 +1366,18 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       {/* ── MACD sub-chart ── */}
       {showMACD && (
         <div className="border-t border-[#1e293b]">
-          <div className="px-3 py-0.5 flex items-center gap-2 text-[10px] font-mono bg-[#0f172a]">
+          <div className="px-3 py-1 flex items-center gap-2 text-[11px] font-mono bg-[#0f172a]">
+            <span className="text-blue-400 font-semibold">MACD</span>
+            <span className="text-[#94a3b8]">(12, 26, 9)</span>
+            <span className="text-[#64748b]">|</span>
             <span className="text-blue-400 font-medium">MACD</span>
-            <span className="text-[#475569]">(12, 26, 9)</span>
-            <span className="text-[#475569]">|</span>
-            <span className="text-blue-400">MACD</span>
-            <span className="text-orange-400">Signal</span>
-            <span className="text-terminal-green/60">Histogram</span>
+            <span className="text-orange-400 font-medium">Signal</span>
+            <span className="text-terminal-green/80">Histogram</span>
             {crosshairData?.macd != null && (
               <>
-                <span className="text-[#475569]">|</span>
+                <span className="text-[#64748b]">|</span>
                 <span className="text-blue-300 font-bold">{crosshairData.macd.toFixed(2)}</span>
-                <span className="text-orange-300">{crosshairData.macdSignal?.toFixed(2)}</span>
+                <span className="text-orange-300 font-medium">{crosshairData.macdSignal?.toFixed(2)}</span>
               </>
             )}
           </div>
