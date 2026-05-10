@@ -23,6 +23,11 @@ function _csSave(key, value) {
   } catch {}
 }
 
+// Module-level generation counter shared across all compact chart instances on the page.
+// Increments each time any compact chart broadcasts a time range change, letting
+// the originating chart skip its own echo via lastSentGenerationRef.
+let _syncGeneration = 0
+
 // IST offset: +5:30 = 19800 seconds
 const IST_OFFSET = 19800
 
@@ -100,6 +105,9 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const volCapRef = useRef(1)
   const syncingCrosshairRef = useRef(false)
   const syncingTimeRef = useRef(false)
+  // Grid sync refs: prevent the originating chart from echoing its own broadcast back to itself
+  const lastSentGenerationRef = useRef(-1)
+  const applyingFromGlobalRef = useRef(false)
 
   // Read main chart's actual rendered price scale width and force sub-charts to match.
   // Called via setTimeout so lightweight-charts has finished its layout pass first.
@@ -114,7 +122,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const rsiDataRef = useRef([])
   const macdDataRef = useRef({ macd: [], signal: [] })
   const isFirstLoad = useRef(true)
-  const { ticker } = useStore()
+  const { ticker, chartTimeRange, setChartTimeRange } = useStore()
   const [interval, setInterval_] = useState(() =>
     compact ? defaultInterval : _csGet('interval', defaultInterval)
   )
@@ -172,6 +180,20 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   useEffect(() => { if (!compact) _csSave('showPivots',   showPivots)  }, [showPivots,   compact])
   useEffect(() => { if (!compact) _csSave('showEMA',      showEMA)     }, [showEMA,      compact])
 
+  // Grid time sync: apply an incoming range broadcast from a sibling compact chart.
+  // Skip if this chart was the one that sent the update (matched by generation id).
+  useEffect(() => {
+    if (!compact || !chartInstance.current || !chartTimeRange) return
+    if (chartTimeRange.gen === lastSentGenerationRef.current) return
+    applyingFromGlobalRef.current = true
+    chartInstance.current.timeScale().setVisibleLogicalRange({
+      from: chartTimeRange.from,
+      to: chartTimeRange.to,
+    })
+    // Clear flag after subscribeVisibleLogicalRangeChange fires synchronously above
+    requestAnimationFrame(() => { applyingFromGlobalRef.current = false })
+  }, [chartTimeRange, compact])
+
   const [signalStats, setSignalStats] = useState(null)
   const [tradeStats, setTradeStats] = useState(null)  // v4: trade performance stats
   const [activeTradeInfo, setActiveTradeInfo] = useState(null)  // v4: current open trade
@@ -189,26 +211,36 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     }
   }, [])
 
-  // Sync fullscreen state and resize charts
+  // Sync fullscreen state and resize charts.
+  // Wrapped in rAF so the browser fullscreen layout settles before we read dimensions,
+  // and so React's re-render (which adds flex-1 to the chart div) has time to run.
   useEffect(() => {
     const handler = () => {
       const fs = !!document.fullscreenElement
       setIsFullscreen(fs)
-      if (chartInstance.current && chartRef.current) {
-        const subPanels = (showRSI ? 150 : 0) + (showMACD ? 150 : 0)
-        const mainH = fs ? window.innerHeight - subPanels - 120 : (compact ? 280 : Math.max(400, window.innerHeight - 280))
-        chartInstance.current.applyOptions({
-          width: chartRef.current.clientWidth,
-          height: mainH,
-        })
-        chartInstance.current.timeScale().fitContent()
-      }
-      if (rsiChartInstance.current && rsiChartRef.current) {
-        rsiChartInstance.current.applyOptions({ width: rsiChartRef.current.clientWidth })
-      }
-      if (macdChartInstance.current && macdChartRef.current) {
-        macdChartInstance.current.applyOptions({ width: macdChartRef.current.clientWidth })
-      }
+      requestAnimationFrame(() => {
+        if (chartInstance.current && chartRef.current) {
+          const subPanels = (showRSI ? 150 : 0) + (showMACD ? 150 : 0)
+          const mainH = fs
+            ? window.innerHeight - subPanels - 120
+            : (compact ? 280 : Math.max(400, window.innerHeight - 280))
+          chartInstance.current.applyOptions({
+            width: fs ? window.innerWidth : chartRef.current.clientWidth,
+            height: mainH,
+          })
+          chartInstance.current.timeScale().fitContent()
+        }
+        if (rsiChartInstance.current && rsiChartRef.current) {
+          rsiChartInstance.current.applyOptions({
+            width: fs ? window.innerWidth : rsiChartRef.current.clientWidth,
+          })
+        }
+        if (macdChartInstance.current && macdChartRef.current) {
+          macdChartInstance.current.applyOptions({
+            width: fs ? window.innerWidth : macdChartRef.current.clientWidth,
+          })
+        }
+      })
     }
     document.addEventListener('fullscreenchange', handler)
     return () => document.removeEventListener('fullscreenchange', handler)
@@ -359,29 +391,38 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     })
 
     // Sync main chart time scale → RSI + MACD (runs once; refs always see current values)
+    // In grid mode also broadcast to sibling compact charts via Zustand.
     chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
       if (syncingTimeRef.current || !range) return
       syncingTimeRef.current = true
       try {
         rsiChartInstance.current?.timeScale().setVisibleLogicalRange(range)
         macdChartInstance.current?.timeScale().setVisibleLogicalRange(range)
+        if (compact && !applyingFromGlobalRef.current) {
+          const gen = ++_syncGeneration
+          lastSentGenerationRef.current = gen
+          setChartTimeRange({ from: range.from, to: range.to, gen })
+        }
       } finally {
         syncingTimeRef.current = false
       }
     })
 
     const handleResize = () => {
-      // rAF ensures CSS grid reflow finishes before we read clientWidth
+      // rAF ensures CSS grid reflow finishes before we read clientWidth.
+      // Also check fullscreen: the resize event fires when entering/exiting fullscreen,
+      // and we must not reset the chart back to the non-fullscreen compact height (280px).
       requestAnimationFrame(() => {
+        const isFs = !!document.fullscreenElement
         if (chartRef.current && chartInstance.current) {
           chartInstance.current.applyOptions({
-            width: chartRef.current.clientWidth,
-            height: compact ? 280 : Math.max(400, window.innerHeight - 280),
+            width: isFs ? window.innerWidth : chartRef.current.clientWidth,
+            height: isFs ? window.innerHeight - 120 : (compact ? 280 : Math.max(400, window.innerHeight - 280)),
           })
         }
         ;[rsiChartInstance, macdChartInstance].forEach(ref => {
           if (ref.current) {
-            ref.current.applyOptions({ width: chartRef.current?.clientWidth || 0 })
+            ref.current.applyOptions({ width: isFs ? window.innerWidth : (chartRef.current?.clientWidth || 0) })
           }
         })
         setTimeout(syncPriceScaleWidths, 150)

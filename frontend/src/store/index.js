@@ -282,4 +282,10 @@ export const useStore = create((set, get) => ({
       set({ auditLogLoading: false })
     }
   },
+
+  // ── Grid chart time sync ──────────────────────────────────────────────
+  // Shared visible range for all compact (grid) charts.
+  // { from, to, gen } — gen prevents the originating chart from echoing its own update.
+  chartTimeRange: null,
+  setChartTimeRange: (range) => set({ chartTimeRange: range }),
 }))
