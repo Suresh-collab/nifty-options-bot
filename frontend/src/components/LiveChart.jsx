@@ -98,6 +98,9 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const tradeLinesRef = useRef([])  // v4: active trade SL/target/entry lines
   const lastDataRef = useRef([])
   const volCapRef = useRef(1)
+  const syncingCrosshairRef = useRef(false)
+  const rsiDataRef = useRef([])
+  const macdDataRef = useRef({ macd: [], signal: [] })
   const isFirstLoad = useRef(true)
   const { ticker } = useStore()
   const [interval, setInterval_] = useState(() =>
@@ -290,10 +293,13 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     ema20SeriesRef.current = ema20Series
     ema50SeriesRef.current = ema50Series
 
-    // Crosshair hover — show OHLCV + indicator values
+    // Crosshair hover — show OHLCV + indicator values; sync position to sub-charts
     chart.subscribeCrosshairMove(param => {
+      if (syncingCrosshairRef.current) return
       if (!param.time || !param.seriesData) {
         setCrosshairData(null)
+        rsiChartInstance.current?.clearCrosshairPosition?.()
+        macdChartInstance.current?.clearCrosshairPosition?.()
         return
       }
       const candle = param.seriesData.get(candleSeries)
@@ -301,6 +307,10 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       const st = param.seriesData.get(stLineSeries)
       const e20 = param.seriesData.get(ema20Series)
       const e50 = param.seriesData.get(ema50Series)
+      const t = param.time
+      const rsiEntry = rsiDataRef.current.find(d => d.time === t)
+      const macdEntry = macdDataRef.current.macd.find(d => d.time === t)
+      const macdSigEntry = macdDataRef.current.signal.find(d => d.time === t)
       if (candle) {
         setCrosshairData({
           open: candle.open,
@@ -311,8 +321,27 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           supertrend: st?.value,
           ema20: e20?.value,
           ema50: e50?.value,
+          rsi: rsiEntry?.value,
+          macd: macdEntry?.value,
+          macdSignal: macdSigEntry?.value,
           isUp: candle.close >= candle.open,
         })
+      }
+      // Lock crosshair position across indicator panels
+      syncingCrosshairRef.current = true
+      try {
+        if (rsiChartInstance.current && rsiSeriesRef.current && rsiEntry) {
+          rsiChartInstance.current.setCrosshairPosition(rsiEntry.value, t, rsiSeriesRef.current)
+        } else {
+          rsiChartInstance.current?.clearCrosshairPosition?.()
+        }
+        if (macdChartInstance.current && macdLineRef.current && macdEntry) {
+          macdChartInstance.current.setCrosshairPosition(macdEntry.value, t, macdLineRef.current)
+        } else {
+          macdChartInstance.current?.clearCrosshairPosition?.()
+        }
+      } finally {
+        syncingCrosshairRef.current = false
       }
     })
 
@@ -398,12 +427,43 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       rsiSeriesRef.current = rsiLine
       rsiOverboughtRef.current = { obZone, osZone }
 
-      // Sync time scale
+      // Sync time scale scroll
       if (chartInstance.current) {
         chartInstance.current.timeScale().subscribeVisibleLogicalRangeChange(range => {
           if (range && rsiChartInstance.current) rsiChartInstance.current.timeScale().setVisibleLogicalRange(range)
         })
       }
+
+      // Sync crosshair back to main chart when user hovers RSI panel
+      rsiChart.subscribeCrosshairMove(rsiParam => {
+        if (syncingCrosshairRef.current) return
+        if (!rsiParam.time) {
+          chartInstance.current?.clearCrosshairPosition?.()
+          macdChartInstance.current?.clearCrosshairPosition?.()
+          return
+        }
+        const t = rsiParam.time
+        const data = lastDataRef.current.find(d => d.time === t)
+        if (!data || !chartInstance.current || !candleSeriesRef.current) return
+        syncingCrosshairRef.current = true
+        try {
+          chartInstance.current.setCrosshairPosition(data.close, t, candleSeriesRef.current)
+          const macdEntry = macdDataRef.current.macd.find(d => d.time === t)
+          if (macdChartInstance.current && macdLineRef.current && macdEntry) {
+            macdChartInstance.current.setCrosshairPosition(macdEntry.value, t, macdLineRef.current)
+          }
+          setCrosshairData({
+            open: data.open, high: data.high, low: data.low, close: data.close,
+            volume: data.volume, isUp: data.close >= data.open,
+            rsi: rsiDataRef.current.find(d => d.time === t)?.value,
+            macd: macdDataRef.current.macd.find(d => d.time === t)?.value,
+            macdSignal: macdDataRef.current.signal.find(d => d.time === t)?.value,
+          })
+        } finally {
+          syncingCrosshairRef.current = false
+        }
+      })
+
       if (lastDataRef.current.length > 0) applySubCharts(lastDataRef.current)
     }
     if (!showRSI && rsiChartInstance.current) {
@@ -437,6 +497,37 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           if (range && macdChartInstance.current) macdChartInstance.current.timeScale().setVisibleLogicalRange(range)
         })
       }
+
+      // Sync crosshair back to main chart when user hovers MACD panel
+      mc.subscribeCrosshairMove(macdParam => {
+        if (syncingCrosshairRef.current) return
+        if (!macdParam.time) {
+          chartInstance.current?.clearCrosshairPosition?.()
+          rsiChartInstance.current?.clearCrosshairPosition?.()
+          return
+        }
+        const t = macdParam.time
+        const data = lastDataRef.current.find(d => d.time === t)
+        if (!data || !chartInstance.current || !candleSeriesRef.current) return
+        syncingCrosshairRef.current = true
+        try {
+          chartInstance.current.setCrosshairPosition(data.close, t, candleSeriesRef.current)
+          const rsiEntry = rsiDataRef.current.find(d => d.time === t)
+          if (rsiChartInstance.current && rsiSeriesRef.current && rsiEntry) {
+            rsiChartInstance.current.setCrosshairPosition(rsiEntry.value, t, rsiSeriesRef.current)
+          }
+          setCrosshairData({
+            open: data.open, high: data.high, low: data.low, close: data.close,
+            volume: data.volume, isUp: data.close >= data.open,
+            rsi: rsiDataRef.current.find(d => d.time === t)?.value,
+            macd: macdDataRef.current.macd.find(d => d.time === t)?.value,
+            macdSignal: macdDataRef.current.signal.find(d => d.time === t)?.value,
+          })
+        } finally {
+          syncingCrosshairRef.current = false
+        }
+      })
+
       if (lastDataRef.current.length > 0) applySubCharts(lastDataRef.current)
     }
     if (!showMACD && macdChartInstance.current) {
@@ -448,19 +539,29 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     }
   }, [showMACD])
 
-  // Apply data to RSI & MACD sub-charts
+  // Apply data to RSI & MACD sub-charts; always update lookup refs for crosshair sync
   const applySubCharts = useCallback((data) => {
     const result = computeChartSignals(data, interval)
 
+    // Build RSI data — stored in ref for crosshair value lookup regardless of panel state
+    const rsiVals = result.rsiValues || []
+    const rsiData = []
+    for (let i = 0; i < data.length; i++) {
+      if (rsiVals[i] !== null && rsiVals[i] !== undefined) {
+        rsiData.push({ time: data[i].time, value: rsiVals[i] })
+      }
+    }
+    rsiDataRef.current = rsiData
+
+    // Build MACD data — stored in ref for crosshair value lookup regardless of panel state
+    const macdData = result.macdChartData || []
+    macdDataRef.current = {
+      macd: macdData.map(d => ({ time: d.time, value: d.macd })),
+      signal: macdData.map(d => ({ time: d.time, value: d.signal })),
+    }
+
     // RSI
     if (rsiSeriesRef.current && rsiChartInstance.current) {
-      const rsiVals = result.rsiValues || []
-      const rsiData = []
-      for (let i = 0; i < data.length; i++) {
-        if (rsiVals[i] !== null && rsiVals[i] !== undefined) {
-          rsiData.push({ time: data[i].time, value: rsiVals[i] })
-        }
-      }
       rsiSeriesRef.current.setData(rsiData)
       if (rsiData.length > 0 && rsiOverboughtRef.current) {
         rsiOverboughtRef.current.obZone.setData(rsiData)
@@ -470,9 +571,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
 
     // MACD
     if (macdLineRef.current && macdChartInstance.current) {
-      const macdData = result.macdChartData || []
-      macdLineRef.current.setData(macdData.map(d => ({ time: d.time, value: d.macd })))
-      macdSignalRef.current.setData(macdData.map(d => ({ time: d.time, value: d.signal })))
+      macdLineRef.current.setData(macdDataRef.current.macd)
+      macdSignalRef.current.setData(macdDataRef.current.signal)
       macdHistRef.current.setData(macdData.map(d => ({
         time: d.time,
         value: d.histogram,
@@ -997,6 +1097,12 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             {crosshairData.ema50 != null && showEMA && (
               <><span className="text-purple-400">E50</span><span className="text-[#94a3b8]">{crosshairData.ema50.toFixed(2)}</span></>
             )}
+            {crosshairData.rsi != null && showRSI && (
+              <><span className="text-[#475569]">|</span><span className="text-purple-400">RSI</span><span className={crosshairData.rsi > 70 ? 'text-terminal-red font-bold' : crosshairData.rsi < 40 ? 'text-terminal-green font-bold' : 'text-[#94a3b8]'}>{crosshairData.rsi.toFixed(1)}</span></>
+            )}
+            {crosshairData.macd != null && showMACD && (
+              <><span className="text-[#475569]">|</span><span className="text-blue-400">MACD</span><span className="text-[#94a3b8]">{crosshairData.macd.toFixed(2)}</span><span className="text-[#475569] mx-0.5">/</span><span className="text-orange-400">Sig</span><span className="text-[#94a3b8]">{crosshairData.macdSignal?.toFixed(2)}</span></>
+            )}
           </>
         ) : (
           <span className="text-[#475569]">Hover over chart for details</span>
@@ -1012,9 +1118,17 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           <div className="px-3 py-0.5 flex items-center gap-2 text-[10px] font-mono bg-[#0f172a]">
             <span className="text-purple-400 font-medium">RSI (14)</span>
             <span className="text-[#475569]">|</span>
-            <span className="text-terminal-red">70</span>
+            <span className="text-terminal-red">OB 70</span>
             <span className="text-[#64748b]">50</span>
-            <span className="text-terminal-green">40</span>
+            <span className="text-terminal-green">OS 40</span>
+            {crosshairData?.rsi != null && (
+              <>
+                <span className="text-[#475569]">|</span>
+                <span className={`font-bold ${crosshairData.rsi > 70 ? 'text-terminal-red' : crosshairData.rsi < 40 ? 'text-terminal-green' : 'text-purple-300'}`}>
+                  RSI {crosshairData.rsi.toFixed(1)}
+                </span>
+              </>
+            )}
           </div>
           <div ref={rsiChartRef} />
         </div>
@@ -1030,6 +1144,13 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             <span className="text-blue-400">MACD</span>
             <span className="text-orange-400">Signal</span>
             <span className="text-terminal-green/60">Histogram</span>
+            {crosshairData?.macd != null && (
+              <>
+                <span className="text-[#475569]">|</span>
+                <span className="text-blue-300 font-bold">{crosshairData.macd.toFixed(2)}</span>
+                <span className="text-orange-300">{crosshairData.macdSignal?.toFixed(2)}</span>
+              </>
+            )}
           </div>
           <div ref={macdChartRef} />
         </div>

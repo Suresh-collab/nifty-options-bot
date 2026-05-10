@@ -1,3 +1,4 @@
+import os
 import yfinance as yf
 import pandas as pd
 import httpx
@@ -9,7 +10,11 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 # In-memory cache: {key: (timestamp, data)}
 _cache: dict = {}
-CACHE_TTL = 10  # seconds — fast refresh for live chart
+CACHE_TTL = 10  # seconds — default for non-OHLCV entries
+
+# Interval-aware OHLCV cache TTL — longer intervals refresh less often,
+# keeping Twelve Data free-tier (800 calls/day) well inside the limit
+_OHLCV_CACHE_TTL = {"1m": 30, "5m": 60, "15m": 120, "1d": 300}
 
 TICKERS = {
     "NIFTY":  "^NSEI",
@@ -25,10 +30,10 @@ _YF_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-def _cache_get(key):
+def _cache_get(key, ttl=None):
     if key in _cache:
         ts, data = _cache[key]
-        if time.time() - ts < CACHE_TTL:
+        if time.time() - ts < (ttl if ttl is not None else CACHE_TTL):
             return data
     return None
 
@@ -177,38 +182,112 @@ def _fetch_nse_chart(ticker: str, interval: str = "5m") -> list:
     return candles
 
 
+_TD_BASE = "https://api.twelvedata.com"
+_TD_SYMBOLS = {"NIFTY": ("NIFTY", "NSE"), "SENSEX": ("SENSEX", "BSE")}
+_TD_INTERVALS = {"1m": "1min", "5m": "5min", "15m": "15min", "1d": "1day"}
+_TD_OUTPUTSIZE = {"1m": 500, "5m": 200, "15m": 100, "1d": 90}
+
+
+def _fetch_twelve_data(ticker: str, interval: str) -> "pd.DataFrame | None":
+    """
+    Fetch OHLCV from Twelve Data API (real-time, works from any IP).
+    Returns a DataFrame matching get_ohlcv() format, or None on any failure.
+    Falls back transparently — caller always has yfinance as backup.
+    """
+    api_key = os.getenv("TWELVEDATA_API_KEY", "")
+    if not api_key:
+        return None
+
+    sym_info = _TD_SYMBOLS.get(ticker.upper())
+    td_interval = _TD_INTERVALS.get(interval)
+    if not sym_info or not td_interval:
+        return None
+
+    symbol, exchange = sym_info
+    outputsize = _TD_OUTPUTSIZE.get(interval, 100)
+
+    url = (
+        f"{_TD_BASE}/time_series"
+        f"?symbol={symbol}&exchange={exchange}"
+        f"&interval={td_interval}&outputsize={outputsize}"
+        f"&timezone=UTC&apikey={api_key}"
+    )
+
+    try:
+        resp = httpx.get(url, timeout=10, follow_redirects=True)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+
+    if data.get("status") == "error" or "values" not in data:
+        code = data.get("code", "")
+        if code == 429:
+            print(f"[TwelveData] Rate limit hit for {ticker}/{interval} — falling back to yfinance")
+        return None
+
+    values = list(reversed(data["values"]))  # newest-first → oldest-first
+    if not values:
+        return None
+
+    records = []
+    for v in values:
+        try:
+            records.append({
+                "datetime": pd.to_datetime(v["datetime"]),  # UTC (timezone=UTC requested)
+                "Open":   float(v["open"]),
+                "High":   float(v["high"]),
+                "Low":    float(v["low"]),
+                "Close":  float(v["close"]),
+                "Volume": float(v.get("volume") or 0),
+            })
+        except (KeyError, ValueError):
+            continue
+
+    if not records:
+        return None
+
+    df = pd.DataFrame(records).set_index("datetime")
+    return df
+
+
 def get_ohlcv(ticker: str, interval: str = "5m") -> pd.DataFrame:
     """
     Fetch OHLCV data for NIFTY or SENSEX.
-    Tries yfinance first, falls back to direct Yahoo Finance API.
+    Priority: Twelve Data (real-time, any IP) → yfinance → direct Yahoo HTTP API.
+    Cache TTL is interval-aware to keep Twelve Data free-tier under 800 calls/day.
     """
     cache_key = f"ohlcv_{ticker}_{interval}"
-    cached = _cache_get(cache_key)
+    ttl = _OHLCV_CACHE_TTL.get(interval, 30)
+    cached = _cache_get(cache_key, ttl=ttl)
     if cached is not None:
         return cached
 
-    symbol = TICKERS.get(ticker.upper(), ticker)
-    period = "5d" if interval in ("1m", "2m", "5m") else "60d"
+    # 1. Twelve Data — real-time, works from any IP, needs API key
+    df = _fetch_twelve_data(ticker, interval)
 
-    # Try yfinance library first
-    df = None
-    try:
-        df = yf.download(symbol, period=period, interval=interval,
-                         progress=False, auto_adjust=True)
-        if df.empty:
-            df = None
-        else:
-            # yfinance >= 1.0 returns MultiIndex columns (Price, Ticker)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-    except Exception:
-        df = None
-
-    # Fallback: direct Yahoo Finance HTTP API
+    # 2. yfinance — 15-min delayed from non-Indian IPs
     if df is None or df.empty:
+        symbol = TICKERS.get(ticker.upper(), ticker)
+        period = "5d" if interval in ("1m", "2m", "5m") else "60d"
+        try:
+            df = yf.download(symbol, period=period, interval=interval,
+                             progress=False, auto_adjust=True)
+            if df.empty:
+                df = None
+            else:
+                # yfinance >= 1.0 returns MultiIndex columns (Price, Ticker)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+        except Exception:
+            df = None
+
+    # 3. Direct Yahoo Finance HTTP API — last resort
+    if df is None or df.empty:
+        symbol = TICKERS.get(ticker.upper(), ticker)
         df = _fetch_yahoo_direct(symbol, interval)
 
-    if df.empty:
+    if df is None or df.empty:
         raise ValueError(f"No data returned for {ticker}")
 
     df.index = pd.to_datetime(df.index)

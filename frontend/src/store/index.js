@@ -164,7 +164,32 @@ export const useStore = create((set, get) => ({
       const res = await fetch(`/api/daily-stats/${ticker}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      set({ dailyStats: Object.keys(data).length > 0 ? data : null, dailyStatsLoading: false })
+      if (Object.keys(data).length > 0) {
+        set({ dailyStats: data, dailyStatsLoading: false })
+        return
+      }
+      // Fallback: last 1D candle when intraday data isn't available (closed/weekend)
+      const fallback = await fetch(`/api/chart/${ticker}?interval=1d`)
+      if (fallback.ok) {
+        const candles = await fallback.json()
+        if (candles && candles.length > 0) {
+          const last = candles[candles.length - 1]
+          const prev = candles.length > 1 ? candles[candles.length - 2] : null
+          const changePts = prev ? +(last.close - prev.close).toFixed(2) : null
+          const changePct = prev ? +((last.close - prev.close) / prev.close * 100).toFixed(2) : null
+          set({
+            dailyStats: {
+              ticker,
+              _isFallback: true,
+              day: { open: last.open, high: last.high, low: last.low, close: last.close,
+                     prev_close: prev?.close ?? null, change_pts: changePts, change_pct: changePct },
+            },
+            dailyStatsLoading: false,
+          })
+          return
+        }
+      }
+      set({ dailyStats: null, dailyStatsLoading: false })
     } catch {
       set({ dailyStatsLoading: false })
     }

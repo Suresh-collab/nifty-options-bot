@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # Per-install salt prepended to plaintext before Fernet encryption.
     broker_salt: str = ""
 
+    # ── Real-time market data ─────────────────────────────────────────────
+    # Twelve Data API key — free tier = 800 calls/day; leave blank to use
+    # yfinance (15-min delayed). Get key at https://twelvedata.com
+    twelvedata_api_key: str = ""
+
     # ── Phase 3 risk settings ─────────────────────────────────────────────
     # Reference capital for daily P&L limit calculations.
     paper_trading_capital: float = 100_000.0

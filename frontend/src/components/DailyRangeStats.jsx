@@ -79,12 +79,16 @@ export default function DailyRangeStats() {
             Loading…
           </div>
         ) : dailyStats ? (
-          <>
-            <StatBlock label="Open Candle 9:15" data={dailyStats.opening_candle} />
-            <StatBlock label="First 5 Min"      data={dailyStats.first_5min} />
-            <StatBlock label="First 15 Min"     data={dailyStats.first_15min} />
-            <StatBlock label="Day So Far"       data={dailyStats.day} isDay />
-          </>
+          dailyStats._isFallback ? (
+            <StatBlock label="Last Session" data={dailyStats.day} isDay />
+          ) : (
+            <>
+              <StatBlock label="Open Candle 9:15" data={dailyStats.opening_candle} />
+              <StatBlock label="First 5 Min"      data={dailyStats.first_5min} />
+              <StatBlock label="First 15 Min"     data={dailyStats.first_15min} />
+              <StatBlock label="Day So Far"       data={dailyStats.day} isDay />
+            </>
+          )
         ) : (
           <div className="flex items-center px-4 py-2 text-[10px] font-mono text-[#475569]">
             Pre-market — data available after 9:15 IST
