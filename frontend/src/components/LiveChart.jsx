@@ -22,6 +22,9 @@ function _csSave(key, value) {
     localStorage.setItem(_CS_KEY, JSON.stringify({ ...s, [key]: value }))
   } catch {}
 }
+// Visible-range key is namespaced per (ticker, interval) so each combo remembers
+// its own pan/zoom. Stored inside the same nob_chartSettings bag.
+function _rangeKey(ticker, interval) { return `viewRange_${ticker}_${interval}` }
 
 // Module-level generation counter shared across all compact chart instances on the page.
 // Increments each time any compact chart broadcasts a time range change, letting
@@ -155,6 +158,21 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
 
   // Keep ref in sync so fetchChart closure always has current value without re-subscribing
   useEffect(() => { candleTypeRef.current = candleType }, [candleType])
+
+  // Stable refs for the visible-range save/restore closures (chart created once,
+  // closure can't see future ticker/interval changes without refs).
+  const intervalRef = useRef(interval)
+  const tickerRef = useRef(ticker)
+  const rangeSaveTimerRef = useRef(null)
+  useEffect(() => { intervalRef.current = interval }, [interval])
+  useEffect(() => { tickerRef.current = ticker }, [ticker])
+
+  // Reset first-load flag when ticker or interval changes in single-chart mode
+  // so the saved range for the new (ticker, interval) gets re-applied.
+  useEffect(() => {
+    if (compact) return
+    isFirstLoad.current = true
+  }, [ticker, interval, compact])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
@@ -490,6 +508,16 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
         macdChartInstance.current?.timeScale().setVisibleLogicalRange(range)
       } finally {
         syncingTimeRef.current = false
+      }
+      // Persist single-chart pan/zoom per (ticker, interval) so a refresh
+      // restores the user's view. Debounced — wheel/drag fires this rapidly.
+      if (!compact) {
+        if (rangeSaveTimerRef.current) clearTimeout(rangeSaveTimerRef.current)
+        rangeSaveTimerRef.current = setTimeout(() => {
+          _csSave(_rangeKey(tickerRef.current, intervalRef.current), {
+            from: range.from, to: range.to,
+          })
+        }, 400)
       }
     })
 
@@ -1024,31 +1052,52 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
 
         if (isFirstLoad.current) {
           if (chartInstance.current && data.length > 0) {
-            let fromIdx
-            let toIdx = data.length - 1 + 3
-            if (compact) {
-              // Grid view: always show last 25 candles with 8-bar right pad (≈ 33 bars wide).
-              // Fixed count regardless of interval so all four quadrants look consistent.
-              const compactCount = 25
-              const rightPad = 8
-              fromIdx = Math.max(0, data.length - compactCount)
-              toIdx = data.length - 1 + rightPad
-            } else {
-              // Single view: show last 1 trading day (2 days for 15m)
-              const lastTime = data[data.length - 1].time
-              const lastDayStart = Math.floor(lastTime / 86400) * 86400
-              const daysToShow = interval === '15m' ? 2 : 1
-              fromIdx = interval === '1d'
-                ? Math.max(0, data.length - 90)
-                : data.findIndex(d => d.time >= lastDayStart - (daysToShow - 1) * 86400)
+            // Single-chart mode: if the user has a saved pan/zoom for this
+            // (ticker, interval), restore it instead of the default view.
+            const savedRange = !compact ? _csGet(_rangeKey(ticker, interval), null) : null
+            let applied = false
+            if (savedRange && Number.isFinite(savedRange.from) && Number.isFinite(savedRange.to)
+                && data.length > 5) {
+              // Guard: only apply if the saved range overlaps the current data extent.
+              // Stale ranges (much older than data start) would render an empty view.
+              const dataLen = data.length
+              if (savedRange.to > 0 && savedRange.from < dataLen + 50) {
+                try {
+                  chartInstance.current.timeScale().setVisibleLogicalRange({
+                    from: savedRange.from, to: savedRange.to,
+                  })
+                  applied = true
+                } catch { /* fall through to default */ }
+              }
             }
-            if (fromIdx >= 0 && fromIdx < data.length - 5) {
-              chartInstance.current.timeScale().setVisibleLogicalRange({
-                from: fromIdx,
-                to: toIdx,
-              })
-            } else {
-              chartInstance.current.timeScale().fitContent()
+
+            if (!applied) {
+              let fromIdx
+              let toIdx = data.length - 1 + 3
+              if (compact) {
+                // Grid view: always show last 25 candles with 8-bar right pad (≈ 33 bars wide).
+                // Fixed count regardless of interval so all four quadrants look consistent.
+                const compactCount = 25
+                const rightPad = 8
+                fromIdx = Math.max(0, data.length - compactCount)
+                toIdx = data.length - 1 + rightPad
+              } else {
+                // Single view: show last 1 trading day (2 days for 15m)
+                const lastTime = data[data.length - 1].time
+                const lastDayStart = Math.floor(lastTime / 86400) * 86400
+                const daysToShow = interval === '15m' ? 2 : 1
+                fromIdx = interval === '1d'
+                  ? Math.max(0, data.length - 90)
+                  : data.findIndex(d => d.time >= lastDayStart - (daysToShow - 1) * 86400)
+              }
+              if (fromIdx >= 0 && fromIdx < data.length - 5) {
+                chartInstance.current.timeScale().setVisibleLogicalRange({
+                  from: fromIdx,
+                  to: toIdx,
+                })
+              } else {
+                chartInstance.current.timeScale().fitContent()
+              }
             }
           }
           isFirstLoad.current = false

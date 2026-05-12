@@ -33,7 +33,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => {
     try { return localStorage.getItem('nob_activeTab') || 'live' } catch { return 'live' }
   })
-  const [expandedInterval, setExpandedInterval] = useState(null)
+  const [expandedInterval, setExpandedIntervalState] = useState(() => {
+    try { return localStorage.getItem('nob_expandedInterval') || null } catch { return null }
+  })
+
+  const setExpandedInterval = (iv) => {
+    try {
+      if (iv) localStorage.setItem('nob_expandedInterval', iv)
+      else localStorage.removeItem('nob_expandedInterval')
+    } catch {}
+    setExpandedIntervalState(iv)
+  }
 
   const handleViewMode = (m) => {
     try { localStorage.setItem('nob_viewMode', m) } catch {}
