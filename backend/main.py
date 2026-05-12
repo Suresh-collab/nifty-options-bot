@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
-from api.ws import ws_router, start_pnl_poller
+from api.ws import ws_router, start_pnl_poller, start_oi_snapshot_poller
 from config.settings import get_settings
 from middleware.logging import RequestLoggingMiddleware, setup_logging
 
@@ -22,13 +22,19 @@ setup_logging(_settings.log_level)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # P&L poller — broadcasts paper-trade state to connected WS clients.
-    task = await start_pnl_poller(interval=1.0)
+    pnl_task = await start_pnl_poller(interval=1.0)
+    # OI snapshot poller — no-ops unless ENABLE_OI_FLOW_LOGGING is true.
+    # Starts collecting forward-test data for OI Buildup once enabled.
+    oi_task = await start_oi_snapshot_poller(
+        interval=_settings.oi_snapshot_interval_sec,
+    )
     # APScheduler — daily P&L summary at 3:30 PM IST (10:00 UTC).
     from scheduler.jobs import create_scheduler
     scheduler = create_scheduler()
     scheduler.start()
     yield
-    task.cancel()
+    pnl_task.cancel()
+    oi_task.cancel()
     scheduler.shutdown(wait=False)
 
 

@@ -8,9 +8,13 @@ Phase 6 adds set_flag() for in-memory admin-UI overrides (resets on restart).
 from config.settings import get_settings
 
 _FLAG_ATTRS = {
-    "ENABLE_ML_SIGNAL": "enable_ml_signal",
-    "ENABLE_LIVE_BROKER": "enable_live_broker",
-    "ENABLE_AUTO_EXECUTION": "enable_auto_execution",
+    "ENABLE_ML_SIGNAL":          "enable_ml_signal",
+    "ENABLE_LIVE_BROKER":        "enable_live_broker",
+    "ENABLE_AUTO_EXECUTION":     "enable_auto_execution",
+    # Leading-indicator additions — see config/settings.py
+    "ENABLE_DIVERGENCE_SIGNAL":  "enable_divergence_signal",
+    "ENABLE_DIVERGENCE_FEATURE": "enable_divergence_feature",
+    "ENABLE_OI_FLOW_LOGGING":    "enable_oi_flow_logging",
 }
 
 # In-memory overrides set via admin UI; take precedence over env/settings.

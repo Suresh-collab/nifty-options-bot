@@ -28,6 +28,17 @@ from indicators.engine import _rsi, _ema, _macd, _supertrend, _bbands
 _ATR_PERIOD = 14
 _BB_PERIOD  = 20
 
+# Optional feature: rsi_divergence (gated by ENABLE_DIVERGENCE_FEATURE).
+# When the flag is OFF, build_features() emits the original column set so
+# existing trained models keep working. When ON, the rsi_divergence column
+# is appended — the model must be retrained on the extended schema first.
+def _divergence_feature_enabled() -> bool:
+    try:
+        from config import feature_flags
+        return feature_flags.is_enabled("ENABLE_DIVERGENCE_FEATURE")
+    except Exception:
+        return False
+
 
 def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = _ATR_PERIOD) -> pd.Series:
     tr = pd.concat([
@@ -125,6 +136,16 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     dow = df.index.dayofweek.astype(float)
     out["dow_sin"] = np.sin(2 * np.pi * dow / 5).astype(np.float32)
     out["dow_cos"] = np.cos(2 * np.pi * dow / 5).astype(np.float32)
+
+    # --- RSI divergence (optional, flag-gated) ---
+    if _divergence_feature_enabled():
+        from indicators.divergence import detect_divergence
+        rsi_raw = _rsi(c) * 100.0 if out["rsi"].max() <= 1.0 else _rsi(c)
+        sig_arr, _events = detect_divergence(
+            c, rsi=rsi_raw,
+            pivot_lookback=5, max_lookback_bars=60, include_hidden=False,
+        )
+        out["rsi_divergence"] = sig_arr.astype(np.float32)
 
     return out.replace([np.inf, -np.inf], np.nan).dropna()
 

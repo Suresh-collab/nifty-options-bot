@@ -23,6 +23,19 @@ class Settings(BaseSettings):
     enable_live_broker: bool = False
     enable_auto_execution: bool = False
 
+    # Leading-indicator additions (added after divergence + OI Buildup validation).
+    # All OFF until the supporting work is verified per the recommendation flow:
+    #   • DIVERGENCE_SIGNAL — gates wiring divergence into ai/signal_engine.py
+    #   • DIVERGENCE_FEATURE — gates the rsi_divergence column in ml/features.py
+    #                          (requires the model to be retrained on the extended set)
+    #   • OI_FLOW_LOGGING — gates the background poller that snapshots option chains
+    #                       into oi_snapshots so OI Buildup can be forward-tested
+    enable_divergence_signal:  bool = False
+    enable_divergence_feature: bool = False
+    enable_oi_flow_logging:    bool = False
+    # Snapshot interval in seconds for the OI poller (NSE chain refreshes ~60s).
+    oi_snapshot_interval_sec:  float = 60.0
+
     # ML model version pin — empty string means "use latest active model".
     # Set to e.g. "v1" to roll back to a specific trained version without
     # touching the DB is_active flag.

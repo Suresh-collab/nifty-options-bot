@@ -115,3 +115,65 @@ async def _pnl_poller(interval: float = 1.0) -> None:
 async def start_pnl_poller(interval: float = 1.0) -> asyncio.Task:
     """Start the background poller and return the Task (so main.py can cancel it)."""
     return asyncio.create_task(_pnl_poller(interval), name="pnl_poller")
+
+
+# ---------------------------------------------------------------------------
+# Background OI snapshot poller (forward-test data for OI Buildup)
+# ---------------------------------------------------------------------------
+
+async def _oi_snapshot_poller(interval: float = 60.0,
+                              tickers: tuple[str, ...] = ("NIFTY",)) -> None:
+    """
+    Fetch the option chain for each ticker every `interval` seconds and persist
+    a snapshot into oi_snapshots (via data.oi_snapshot_logger.log_oi_snapshot).
+
+    Behaviour
+    ---------
+    - Skips the whole run if ENABLE_OI_FLOW_LOGGING is OFF (silent no-op).
+    - Skips when the market is closed (no point logging stale data).
+    - Skips synthetic/fallback chains (the logger no-ops on these anyway).
+    - Exceptions are logged but never crash the task.
+    """
+    from config import feature_flags
+    from data.market_data import is_market_open, get_spot_price
+    from data.options_chain import fetch_option_chain
+    from data.oi_snapshot_logger import log_oi_snapshot
+
+    logger.info("OI snapshot poller started (interval=%.0fs, tickers=%s)",
+                interval, tickers)
+
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            if not feature_flags.is_enabled("ENABLE_OI_FLOW_LOGGING"):
+                continue
+            if not is_market_open():
+                continue
+            for ticker in tickers:
+                try:
+                    spot = get_spot_price(ticker)
+                    chain = fetch_option_chain(ticker, spot=spot)
+                    snap_id = await log_oi_snapshot(chain)
+                    if snap_id:
+                        logger.debug("OI snapshot stored: %s id=%s", ticker, snap_id)
+                except Exception as exc:
+                    logger.warning("OI snapshot failed for %s: %s", ticker, exc)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("OI snapshot poller error: %s", exc)
+
+
+async def start_oi_snapshot_poller(
+    interval: float = 60.0,
+    tickers: tuple[str, ...] = ("NIFTY",),
+) -> asyncio.Task:
+    """
+    Start the OI snapshot poller and return the Task.
+
+    Safe to call unconditionally on startup — the task itself short-circuits
+    when ENABLE_OI_FLOW_LOGGING is OFF, so there's no cost when the flag is off.
+    """
+    return asyncio.create_task(
+        _oi_snapshot_poller(interval, tickers), name="oi_snapshot_poller",
+    )
