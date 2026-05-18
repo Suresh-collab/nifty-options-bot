@@ -45,6 +45,8 @@ def create_scheduler():
     """Build a configured AsyncIOScheduler. Call .start() in lifespan."""
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+    from scheduler.shadow import shadow_signal_job
 
     scheduler = AsyncIOScheduler(timezone="UTC")
     # 3:30 PM IST = 10:00 UTC; mon-fri only
@@ -52,6 +54,14 @@ def create_scheduler():
         daily_summary_job,
         CronTrigger(day_of_week="mon-fri", hour=10, minute=0, timezone="UTC"),
         id="daily_summary",
+        replace_existing=True,
+    )
+    # Shadow logger every 5 min; job bails out internally outside market hours.
+    # Observation-only — never affects live signals or orders.
+    scheduler.add_job(
+        shadow_signal_job,
+        IntervalTrigger(minutes=5),
+        id="shadow_signal",
         replace_existing=True,
     )
     return scheduler

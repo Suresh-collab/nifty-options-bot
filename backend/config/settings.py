@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     enable_divergence_signal:  bool = False
     enable_divergence_feature: bool = False
     enable_oi_flow_logging:    bool = False
+    # Tuned Combined Rule (walk-forward validated 2026-05-18 against NIFTY 15m):
+    #   wST=0, wMACD=15, wRSI=30, rsi=25/60, thr=10. Wilson-95% LB ~58% on both
+    #   train (125 trades) and test (66 trades). Affects backtesting/engine.py
+    #   only — live signal_engine.py is intentionally untouched until paper-trade
+    #   validation completes (>= 50 live trades, WR >= 50%).
+    enable_tuned_rule:         bool = False
     # Snapshot interval in seconds for the OI poller (NSE chain refreshes ~60s).
     oi_snapshot_interval_sec:  float = 60.0
 

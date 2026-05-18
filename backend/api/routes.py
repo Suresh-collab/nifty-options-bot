@@ -1182,7 +1182,13 @@ async def scanner_run():
 # Phase 6.3 — Admin endpoints
 # ---------------------------------------------------------------------------
 
-_VALID_FLAGS = ["ENABLE_ML_SIGNAL", "ENABLE_LIVE_BROKER", "ENABLE_AUTO_EXECUTION"]
+def _valid_flags() -> list[str]:
+    """Canonical list of feature flags, sourced from feature_flags._FLAG_ATTRS
+    so new flags are surfaced without a routes.py edit."""
+    from config.feature_flags import _FLAG_ATTRS
+    return list(_FLAG_ATTRS.keys())
+
+_VALID_FLAGS = _valid_flags()
 
 
 @router.get("/admin/audit-log")
@@ -1251,3 +1257,46 @@ async def admin_toggle_flag(flag_name: str, req: FlagUpdateRequest):
     except Exception:
         pass
     return {"flag": flag_name, "enabled": req.enabled}
+
+
+@router.get("/admin/shadow-report")
+async def admin_shadow_report(symbol: str | None = None, limit: int = 500):
+    """Side-by-side comparison of current-rule vs tuned-rule signals (Phase 2
+    validation before promoting the tuned weights into ai/signal_engine.py).
+
+    Returns aggregate stats and the most recent N rows. After ~50 logged rows
+    per symbol, the agree-rate and per-signal breakdowns become meaningful."""
+    from db.base import get_session_factory
+    from sqlalchemy import text as _text
+
+    where = "WHERE symbol = :symbol" if symbol else ""
+    params = {"symbol": symbol} if symbol else {}
+
+    async with get_session_factory()() as session:
+        agg = await session.execute(_text(f"""
+            SELECT
+                symbol,
+                COUNT(*)                                          AS total,
+                SUM(CASE WHEN agree THEN 1 ELSE 0 END)            AS agree_count,
+                SUM(CASE WHEN current_signal = 'BUY_CE' THEN 1 ELSE 0 END) AS cur_ce,
+                SUM(CASE WHEN current_signal = 'BUY_PE' THEN 1 ELSE 0 END) AS cur_pe,
+                SUM(CASE WHEN current_signal = 'AVOID'  THEN 1 ELSE 0 END) AS cur_avoid,
+                SUM(CASE WHEN tuned_signal   = 'BUY_CE' THEN 1 ELSE 0 END) AS tun_ce,
+                SUM(CASE WHEN tuned_signal   = 'BUY_PE' THEN 1 ELSE 0 END) AS tun_pe,
+                SUM(CASE WHEN tuned_signal   = 'AVOID'  THEN 1 ELSE 0 END) AS tun_avoid
+            FROM signal_shadow {where}
+            GROUP BY symbol
+            ORDER BY symbol
+        """), params)
+        summary = [dict(r._mapping) for r in agg.fetchall()]
+
+        rows = await session.execute(_text(f"""
+            SELECT ts, symbol, spot, current_signal, tuned_signal, agree,
+                   rsi, macd_hist, st_dir
+            FROM signal_shadow {where}
+            ORDER BY ts DESC
+            LIMIT :limit
+        """), {**params, "limit": limit})
+        recent = [dict(r._mapping) for r in rows.fetchall()]
+
+    return {"summary": summary, "recent": recent}

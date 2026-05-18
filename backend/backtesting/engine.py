@@ -28,6 +28,18 @@ import pandas as pd
 
 from indicators.engine import _rsi, _macd, _supertrend, _bbands
 from backtesting.metrics import TradeResult, compute_all
+from config import feature_flags
+
+# Walk-forward-validated weights (see scripts/walkforward_combined_rule.py).
+# Activated when feature flag ENABLE_TUNED_RULE is on. Production default is OFF.
+_TUNED_RULE = {
+    "w_st":      0,
+    "w_macd":    15,
+    "w_rsi":     30,
+    "rsi_lo":    25,
+    "rsi_hi":    60,
+    "threshold": 10,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +49,35 @@ IST_OFFSET = pd.Timedelta(hours=5, minutes=30)
 EOD_TIME = pd.Timedelta(hours=15, minutes=30)   # 15:30 IST
 
 
+def _score_with_weights(
+    st_dir: np.ndarray, macd_line: np.ndarray, signal_line: np.ndarray, rsi: np.ndarray,
+    w_st: float, w_macd: float, w_rsi: float,
+    rsi_lo: float, rsi_hi: float, threshold: float,
+) -> np.ndarray:
+    """Parameterised version of the score-to-direction logic. Used by the tuned
+    rule branch and by scripts/sweep_combined_rule.py."""
+    n = len(st_dir)
+    st_score = np.where(st_dir == 1, w_st, -w_st)
+
+    macd_gt = macd_line > signal_line
+    macd_gt_prev = np.roll(macd_gt, 1)
+    macd_gt_prev[0] = macd_gt[0]
+    cross_up = macd_gt & ~macd_gt_prev
+    cross_dn = ~macd_gt & macd_gt_prev
+    trend_w = 0.7 * w_macd
+    macd_score = np.where(cross_up, w_macd,
+                  np.where(cross_dn, -w_macd,
+                  np.where(macd_gt, trend_w, -trend_w)))
+
+    rsi_score = np.where(rsi < rsi_lo, w_rsi, np.where(rsi > rsi_hi, -w_rsi, 0.0))
+    combined = np.clip(st_score + macd_score + rsi_score, -100, 100)
+
+    direction = np.zeros(n, dtype=np.int8)
+    direction[combined > threshold] = 1
+    direction[combined < -threshold] = -1
+    return direction
+
+
 def _score_to_direction(
     st_dir: np.ndarray,          # +1 / -1
     macd_line: np.ndarray,
@@ -44,6 +85,13 @@ def _score_to_direction(
     rsi: np.ndarray,
 ) -> np.ndarray:
     """Return int array: +1 = BUY_CE, -1 = BUY_PE, 0 = AVOID."""
+    if feature_flags.is_enabled("ENABLE_TUNED_RULE"):
+        return _score_with_weights(
+            st_dir, macd_line, signal_line, rsi,
+            w_st=_TUNED_RULE["w_st"], w_macd=_TUNED_RULE["w_macd"],
+            w_rsi=_TUNED_RULE["w_rsi"], rsi_lo=_TUNED_RULE["rsi_lo"],
+            rsi_hi=_TUNED_RULE["rsi_hi"], threshold=_TUNED_RULE["threshold"],
+        )
     n = len(st_dir)
 
     # --- SuperTrend score (+/- 40) ---

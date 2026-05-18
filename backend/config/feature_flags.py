@@ -15,6 +15,7 @@ _FLAG_ATTRS = {
     "ENABLE_DIVERGENCE_SIGNAL":  "enable_divergence_signal",
     "ENABLE_DIVERGENCE_FEATURE": "enable_divergence_feature",
     "ENABLE_OI_FLOW_LOGGING":    "enable_oi_flow_logging",
+    "ENABLE_TUNED_RULE":         "enable_tuned_rule",
 }
 
 # In-memory overrides set via admin UI; take precedence over env/settings.

@@ -40,6 +40,26 @@ const FLAG_META = {
     desc: 'Automatically places broker orders when a signal fires (no manual confirm).',
     warn: 'Only valid when ENABLE_LIVE_BROKER is also enabled.',
   },
+  ENABLE_DIVERGENCE_SIGNAL: {
+    label: 'Divergence Signal',
+    desc: 'Wire RSI divergence into the live signal engine.',
+    warn: 'No measured edge on NIFTY yet. Keep OFF until forward-test passes.',
+  },
+  ENABLE_DIVERGENCE_FEATURE: {
+    label: 'Divergence Feature (ML)',
+    desc: 'Add rsi_divergence column to ml/features.py.',
+    warn: 'Requires model retrain on extended feature set.',
+  },
+  ENABLE_OI_FLOW_LOGGING: {
+    label: 'OI Flow Logging',
+    desc: 'Background poller that snapshots option chains into oi_snapshots.',
+    warn: 'Safe to enable in production; ~1 row/min per index.',
+  },
+  ENABLE_TUNED_RULE: {
+    label: 'Tuned Rule (backtester)',
+    desc: 'Walk-forward-validated weights for backtesting/engine.py only. Live signals are unaffected.',
+    warn: 'Compare via /api/backtest. Promotion to live engine requires Phase 3.',
+  },
 }
 
 // ─── Audit log row ───────────────────────────────────────────────────────────

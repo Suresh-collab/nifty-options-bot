@@ -103,6 +103,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
   const macdHistRef = useRef(null)
   const srLinesRef = useRef([])
   const pivotLinesRef = useRef([])
+  const pivotOverlayRef = useRef(null)   // DOM container for left-side pivot labels
+  const pivotDataRef = useRef([])        // last pivots passed in — used to redraw overlay on pan/zoom
   const tradeLinesRef = useRef([])  // v4: active trade SL/target/entry lines
   const lastDataRef = useRef([])
   const volCapRef = useRef(1)
@@ -509,6 +511,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       } finally {
         syncingTimeRef.current = false
       }
+      // Reposition left-side pivot labels on any pan/zoom (price axis may auto-rescale)
+      renderPivotOverlay()
       // Persist single-chart pan/zoom per (ticker, interval) so a refresh
       // restores the user's view. Debounced — wheel/drag fires this rapidly.
       if (!compact) {
@@ -790,6 +794,23 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
     }
   }, [interval])
 
+  const renderPivotOverlay = useCallback(() => {
+    const overlay = pivotOverlayRef.current
+    const series = candleSeriesRef.current
+    if (!overlay || !series) return
+    while (overlay.firstChild) overlay.removeChild(overlay.firstChild)
+    const pivots = pivotDataRef.current
+    if (!pivots || pivots.length === 0) return
+    for (const p of pivots) {
+      const y = series.priceToCoordinate(p.price)
+      if (y == null) continue
+      const el = document.createElement('div')
+      el.textContent = `${p.label} ${p.price.toFixed(2)}`
+      el.style.cssText = `position:absolute;left:4px;top:${y - 8}px;font:11px/1 'Inter',monospace;color:${p.color};background:rgba(15,23,42,0.85);padding:1px 4px;border-radius:2px;white-space:nowrap;`
+      overlay.appendChild(el)
+    }
+  }, [])
+
   const applySignals = useCallback((data) => {
     if (!candleSeriesRef.current || !chartInstance.current) return
 
@@ -866,8 +887,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
           .filter(l => l.type === 'support')
           .sort((a, b) => b.price - a.price)  // descending: S1 = highest (nearest below price)
         const taggedLevels = [
-          ...resistances.slice(0, 2).map((l, i) => ({ ...l, tag: `R${i + 1}` })),
-          ...supports.slice(0, 2).map((l, i) => ({ ...l, tag: `S${i + 1}` })),
+          ...resistances.slice(0, 2).map((l, i) => ({ ...l, tag: `SR${i + 1}` })),
+          ...supports.slice(0, 2).map((l, i) => ({ ...l, tag: `SS${i + 1}` })),
         ]
         for (const level of taggedLevels) {
           const priceLine = candleSeriesRef.current.createPriceLine({
@@ -888,6 +909,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       }
       pivotLinesRef.current = []
 
+      pivotDataRef.current = (showPivots && pivots) ? pivots : []
       if (showPivots && pivots && pivots.length > 0) {
         for (const p of pivots) {
           const priceLine = candleSeriesRef.current.createPriceLine({
@@ -895,12 +917,13 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
             color: p.color,
             lineWidth: 1,
             lineStyle: p.label === 'PP' ? 0 : 2,
-            axisLabelVisible: true,
+            axisLabelVisible: false,  // left-side overlay handles labels
             title: p.label,
           })
           pivotLinesRef.current.push(priceLine)
         }
       }
+      renderPivotOverlay()
 
       // v4: Remove old trade zone lines
       for (const line of tradeLinesRef.current) {
@@ -1388,7 +1411,14 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
       </div>
 
       {/* ── Main chart ── */}
-      <div ref={chartRef} className={isFullscreen ? 'flex-1' : ''} />
+      <div className={`relative ${isFullscreen ? 'flex-1' : ''}`}>
+        <div ref={chartRef} className={isFullscreen ? 'h-full' : ''} />
+        <div
+          ref={pivotOverlayRef}
+          className="absolute left-0 top-0 pointer-events-none"
+          style={{ width: 0, height: '100%' }}
+        />
+      </div>
 
       {/* ── RSI sub-chart ── */}
       {showRSI && (
@@ -1446,8 +1476,8 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
                 <span><span className="text-terminal-red mr-0.5">▼</span>Sell</span>
                 <span><span className="text-cyan-400 mr-0.5">●</span>Exit Profit</span>
                 <span><span className="text-orange-400 mr-0.5">■</span>Exit Loss</span>
-                <span>S = Support</span>
-                <span>R = Resistance</span>
+                <span>SS = Swing Support</span>
+                <span>SR = Swing Resistance</span>
               </>
             )}
             {showEMA && (
@@ -1456,7 +1486,7 @@ export default function LiveChart({ defaultInterval = '5m', compact = false, def
                 <span><span className="inline-block w-3 h-0.5 bg-purple-500 mr-1 align-middle" />EMA 50</span>
               </>
             )}
-            {showPivots && <span className="text-purple-400">PP R1 R2 S1 S2</span>}
+            {showPivots && <span className="text-purple-400">PP R1 R2 S1 S2 (daily pivots)</span>}
           </div>
         </div>
       )}
